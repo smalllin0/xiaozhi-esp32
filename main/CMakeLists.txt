@@ -14,6 +14,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/display.cc"
             "display/lcd_display.cc"
             "display/oled_display.cc"
+            "display/esplog_display.cc"
             "protocols/protocol.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
@@ -94,6 +95,8 @@ elseif(CONFIG_BOARD_TYPE_XMINI_C3_4G)
     set(BOARD_TYPE "xmini-c3-4g")
 elseif(CONFIG_BOARD_TYPE_XMINI_C3)
     set(BOARD_TYPE "xmini-c3")
+elseif(CONFIG_BOARD_TYPE_ESP32C3_CORE_ADAPTER)
+    set(BOARD_TYPE "my_esp32c3-core_adapter")
 elseif(CONFIG_BOARD_TYPE_ESP32S3_KORVO2_V3)
     set(BOARD_TYPE "esp32s3-korvo2-v3")
 elseif(CONFIG_BOARD_TYPE_ESP_SPARKBOT)
