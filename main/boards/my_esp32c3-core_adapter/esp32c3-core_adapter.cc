@@ -164,6 +164,13 @@ public:
     bool IsPressToTalkEnabled() {
         return press_to_talk_enabled_;
     }
+
+
+    virtual void SetPowerSaveMode(bool enabled) override {
+        if(power_save_timer_) {
+            power_save_timer_->SetEnabled(enabled);
+        }
+    }
 };
 
 DECLARE_BOARD(Esp32c3CoreAdapterBoard);
