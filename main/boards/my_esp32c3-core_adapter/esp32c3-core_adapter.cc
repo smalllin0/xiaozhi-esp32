@@ -48,7 +48,7 @@ private:
             display->SetChatMessage("system", "");
             display->SetEmotion("neutral");
         });
-        power_save_timer_->SetEnabled(true);
+        power_save_timer_->SetEnabled(false);
     }
 
     void InitializeCodecI2c() {
