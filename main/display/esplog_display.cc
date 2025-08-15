@@ -1,5 +1,6 @@
 #include "esplog_display.h"
 
+#include <string.h>
 #include "esp_log.h"
 
 #define TAG "EspLogDisplay"
@@ -28,7 +29,14 @@ void EspLogDisplay::ShowNotification(const std::string &notification, int durati
 
 void EspLogDisplay::SetEmotion(const char* emotion)
 {
-    ESP_LOGW(TAG, "SetEmotion: %s", emotion);
+    for(auto var : emoji_map)
+    {
+        if(strcmp(var.keyword, emotion) == 0) {
+            ESP_LOGW(TAG, "%s", var.emoji);
+            return;
+        } 
+    }
+    ESP_LOGE(TAG, "Emoji can not find!");
 }
 
 void EspLogDisplay::SetIcon(const char* icon)

@@ -5,6 +5,37 @@
 
 #include <string>
 
+typedef struct {
+    const char* keyword;
+    const char* emoji;
+} emoji_map_t;
+
+const emoji_map_t emoji_map[] = {
+    {"neutral",     "😶"},
+    {"happy",       "🙂"},
+    {"laughing",    "😆"},
+    {"funny",       "😂"},
+    {"sad",         "😔"},
+    {"angry",       "😠"},
+    {"crying",      "😭"},
+    {"loving",      "😍"},
+    {"embarrassed", "😳"},
+    {"surprised",   "😲"},
+    {"shocked",     "😱"},
+    {"thinking",    "🤔"},
+    {"winking",     "😉"},
+    {"cool",        "😎"},
+    {"relaxed",     "😌"},
+    {"delicious",   "🤤"},
+    {"kissy",       "😘"},
+    {"confident",   "😏"},
+    {"sleepy",      "😴"},
+    {"silly",       "😜"},
+    {"confused",    "🙄"},
+    // 后续根据协议扩展
+};
+
+
 class EspLogDisplay : public Display { 
 public:
     EspLogDisplay();
