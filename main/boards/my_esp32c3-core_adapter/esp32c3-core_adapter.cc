@@ -165,8 +165,8 @@ public:
         return press_to_talk_enabled_;
     }
 
-
     virtual void SetPowerSaveMode(bool enabled) override {
+        WifiBoard::SetPowerSaveMode(enabled);
         if(power_save_timer_) {
             power_save_timer_->SetEnabled(enabled);
         }
