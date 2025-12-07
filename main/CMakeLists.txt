@@ -15,16 +15,6 @@ set(SOURCES "audio/audio_codec.cc"
             "display/display.cc"
             "display/lcd_display.cc"
             "display/oled_display.cc"
-            "display/lvgl_display/lvgl_display.cc"
-            "display/emote_display.cc"
-            "display/lvgl_display/emoji_collection.cc"
-            "display/lvgl_display/lvgl_theme.cc"
-            "display/lvgl_display/lvgl_font.cc"
-            "display/lvgl_display/lvgl_image.cc"
-            "display/lvgl_display/gif/lvgl_gif.cc"
-            "display/lvgl_display/gif/gifdec.c"
-            "display/lvgl_display/jpg/image_to_jpeg.cpp"
-            "display/lvgl_display/jpg/jpeg_to_image.c"
             "protocols/protocol.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
@@ -187,9 +177,7 @@ elseif(CONFIG_BOARD_TYPE_XMINI_C3_4G)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
 elseif(CONFIG_BOARD_TYPE_XMINI_C3)
     set(BOARD_TYPE "xmini-c3")
-    set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
-    set(BUILTIN_ICON_FONT font_awesome_14_1)
-elseif(CONFIG_BOARD_TYPE_ESP_KORVO2_V3)
+elseif(CONFIG_BOARD_TYPE_ESP32S3_KORVO2_V3)
     set(BOARD_TYPE "esp32s3-korvo2-v3")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)

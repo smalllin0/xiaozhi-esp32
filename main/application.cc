@@ -7,8 +7,6 @@
 #include "websocket_protocol.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
-#include "assets.h"
-#include "settings.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -159,7 +157,42 @@ void Application::CheckNewVersion(Ota& ota) {
         retry_delay = 10; // 重置重试延迟时间
 
         if (ota.HasNewVersion()) {
-            if (UpgradeFirmware(ota)) {
+            Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "happy", Lang::Sounds::OGG_UPGRADE);
+
+            vTaskDelay(pdMS_TO_TICKS(3000));
+
+            SetDeviceState(kDeviceStateUpgrading);
+            
+            display->SetIcon(FONT_AWESOME_DOWNLOAD);
+            std::string message = std::string(Lang::Strings::NEW_VERSION) + ota.GetFirmwareVersion();
+            display->SetChatMessage("system", message.c_str());
+
+            board.SetPowerSaveMode(false);
+            audio_service_.Stop();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+
+            bool upgrade_success = ota.StartUpgrade([display](int progress, size_t speed) {
+                std::thread([display, progress, speed]() {
+                    char buffer[32];
+                    snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
+                    display->SetChatMessage("system", buffer);
+                }).detach();
+            });
+
+            if (!upgrade_success) {
+                // Upgrade failed, restart audio service and continue running
+                ESP_LOGE(TAG, "Firmware upgrade failed, restarting audio service and continuing operation...");
+                audio_service_.Start(); // Restart audio service
+                board.SetPowerSaveMode(true); // Restore power save mode
+                Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "sad", Lang::Sounds::OGG_EXCLAMATION);
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                // Continue to normal operation (don't break, just fall through)
+            } else {
+                // Upgrade success, reboot immediately
+                ESP_LOGI(TAG, "Firmware upgrade successful, rebooting...");
+                display->SetChatMessage("system", "Upgrade successful, rebooting...");
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Brief pause to show message
+                Reboot();
                 return; // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation (don't break, just fall through)
@@ -435,7 +468,10 @@ void Application::Start() {
         }
     });
     protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveMode(true);
+        Settings settings("wifi", false);
+        if (settings.GetBool("sleep_mode", true)) {
+            board.SetPowerSaveMode(true);
+        }
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
