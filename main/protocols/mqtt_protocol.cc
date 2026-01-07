@@ -1,7 +1,7 @@
 #include "mqtt_protocol.h"
 #include "board.h"
 #include "application.h"
-#include "settings.h"
+#include "my_nvs.hpp"
 
 #include <esp_log.h>
 #include <cstring>
@@ -29,13 +29,15 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         mqtt_.reset();
     }
 
-    Settings settings("mqtt", false);
-    auto endpoint = settings.GetString("endpoint");
-    auto client_id = settings.GetString("client_id");
-    auto username = settings.GetString("username");
-    auto password = settings.GetString("password");
-    int keepalive_interval = settings.GetInt("keepalive", 240);
-    publish_topic_ = settings.GetString("publish_topic");
+    std::string endpoint, client_id, username, password;
+    int keepalive_interval = 240;
+    MyNVS nvs("mqtt", NVS_READONLY);
+    nvs.read("endpoint", endpoint);
+    nvs.read("client_id", client_id);
+    nvs.read("username", username);
+    nvs.read("password", password);
+    nvs.read("keepalive", keepalive_interval);
+    nvs.read("publish_topic", publish_topic_);
 
     if (endpoint.empty()) {
         ESP_LOGW(TAG, "MQTT endpoint is not specified");

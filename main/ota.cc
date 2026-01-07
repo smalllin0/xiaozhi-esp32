@@ -1,6 +1,6 @@
 #include "ota.h"
-#include "system_info.h"
-#include "settings.h"
+#include "my_sysInfo.h"
+#include "my_nvs.hpp"
 #include "assets/lang_config.h"
 
 #include <cJSON.h>
@@ -41,8 +41,9 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
-    Settings settings("wifi", false);
-    std::string url = settings.GetString("ota_url");
+    MyNVS nvs("wifi", NVS_READONLY);
+    std::string url;
+    nvs.read("ota_url", url);
     if (url.empty()) {
         url = CONFIG_OTA_URL;
     }
@@ -142,16 +143,20 @@ bool Ota::CheckVersion() {
     has_mqtt_config_ = false;
     cJSON *mqtt = cJSON_GetObjectItem(root, "mqtt");
     if (cJSON_IsObject(mqtt)) {
-        Settings settings("mqtt", true);
+        MyNVS nvs("mqtt", NVS_READWRITE);
         cJSON *item = NULL;
         cJSON_ArrayForEach(item, mqtt) {
             if (cJSON_IsString(item)) {
-                if (settings.GetString(item->string) != item->valuestring) {
-                    settings.SetString(item->string, item->valuestring);
+                std::string str;
+                nvs.read(item->string, str);
+                if (str != item->valuestring) {
+                    nvs.write(item->string, item->valuestring);
                 }
             } else if (cJSON_IsNumber(item)) {
-                if (settings.GetInt(item->string) != item->valueint) {
-                    settings.SetInt(item->string, item->valueint);
+                int value = 0;
+                nvs.read(item->string, value);
+                if (value != item->valueint) {
+                    nvs.write(item->string, item->valueint);
                 }
             }
         }
@@ -163,16 +168,20 @@ bool Ota::CheckVersion() {
     has_websocket_config_ = false;
     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");
     if (cJSON_IsObject(websocket)) {
-        Settings settings("websocket", true);
+        MyNVS nvs("websocket", NVS_READWRITE);
         cJSON *item = NULL;
         cJSON_ArrayForEach(item, websocket) {
             if (cJSON_IsString(item)) {
-                if (settings.GetString(item->string) != item->valuestring) {
-                    settings.SetString(item->string, item->valuestring);
+                std::string str;
+                nvs.read(item->string, str);
+                if (str != item->valuestring) {
+                    nvs.write(item->string, item->valuestring);
                 }
             } else if (cJSON_IsNumber(item)) {
-                if (settings.GetInt(item->string) != item->valueint) {
-                    settings.SetInt(item->string, item->valueint);
+                int value = 0;
+                nvs.read(item->string, value);
+                if (value != item->valueint) {
+                    nvs.write(item->string, item->valueint);
                 }
             }
         }

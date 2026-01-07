@@ -1,14 +1,13 @@
 #include "application.h"
 #include "board.h"
 #include "display.h"
-#include "system_info.h"
+#include "my_sysInfo.h"
 #include "audio_codec.h"
 #include "mqtt_protocol.h"
 #include "websocket_protocol.h"
-#include "font_awesome_symbols.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
-#include "settings.h"
+#include "my_nvs.hpp"
 
 
 #include <cstring>
@@ -111,7 +110,6 @@ void Application::CheckNewVersion(Ota& ota) {
 
             SetDeviceState(kDeviceStateUpgrading);
             
-            display->SetIcon(FONT_AWESOME_DOWNLOAD);
             std::string message = std::string(Lang::Strings::NEW_VERSION) + ota.GetFirmwareVersion();
             display->SetChatMessage("system", message.c_str());
 
@@ -131,8 +129,10 @@ void Application::CheckNewVersion(Ota& ota) {
                 // Upgrade failed, restart audio service and continue running
                 ESP_LOGE(TAG, "Firmware upgrade failed, restarting audio service and continuing operation...");
                 audio_service_.Start(); // Restart audio service
-                Settings settings("wifi", false);
-                if (settings.GetBool("sleep_mode", true)) {
+                MyNVS nvs("wifi", NVS_READONLY);
+                bool sleep = false;
+                nvs.read("sleep_mode", sleep);
+                if (sleep) {
                     board.SetPowerSaveMode(true);           // Restore power save mode
                 }
                 Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "sad", Lang::Sounds::OGG_EXCLAMATION);
@@ -400,8 +400,10 @@ void Application::Start() {
         }
     });
     protocol_->OnAudioChannelClosed([this, &board]() {
-        Settings settings("wifi", false);
-        if (settings.GetBool("sleep_mode", true)) {
+        MyNVS nvs("wifi", NVS_READONLY);
+        bool sleep = false;
+        nvs.read("sleep_mode", sleep);
+        if (sleep) {
             board.SetPowerSaveMode(true);
         }
         Schedule([this]() {
@@ -513,7 +515,7 @@ void Application::Start() {
     }
 
     // Print heap stats
-    SystemInfo::PrintHeapStats();
+    // SystemInfo::PrintHeapStats();
 }
 
 void Application::OnClockTimer() {
@@ -526,7 +528,7 @@ void Application::OnClockTimer() {
     if (clock_ticks_ % 10 == 0) {
         // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
         // SystemInfo::PrintTaskList();
-        SystemInfo::PrintHeapStats();
+        // SystemInfo::PrintHeapStats();
     }
 }
 
@@ -571,8 +573,8 @@ void Application::MainEventLoop() {
 
         if (bits & MAIN_EVENT_VAD_CHANGE) {
             if (device_state_ == kDeviceStateListening) {
-                auto led = Board::GetInstance().GetLed();
-                led->OnStateChanged();
+                // auto led = Board::GetInstance().GetLed();
+                // led->OnStateChanged();
             }
         }
 
@@ -651,8 +653,8 @@ void Application::SetDeviceState(DeviceState state) {
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
-    auto led = board.GetLed();
-    led->OnStateChanged();
+    // auto led = board.GetLed();
+    // led->OnStateChanged();
     switch (state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:

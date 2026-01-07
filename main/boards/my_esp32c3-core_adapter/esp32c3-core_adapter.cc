@@ -1,15 +1,11 @@
 #include "wifi_board.h"
 #include "audio/codecs/es8311_audio_codec.h"
 #include "application.h"
-#include "button.h"
-#include "led/single_led.h"
 #include "mcp_server.h"
-#include "settings.h"
+#include "my_nvs.hpp"
 #include "config.h"
-#include "power_save_timer.h"
 #include "display/esplog_display.h"
 
-#include <wifi_station.h>
 #include <esp_log.h>
 #include <esp_efuse_table.h>
 #include <driver/i2c_master.h>
@@ -21,34 +17,9 @@ class Esp32c3CoreAdapterBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Display* display_ = nullptr;
-    Button boot_button_;
     bool press_to_talk_enabled_ = false;
-    PowerSaveTimer* power_save_timer_ = nullptr;
 
     void InitializePowerSaveTimer() {
-#if CONFIG_USE_ESP_WAKE_WORD
-        power_save_timer_ = new PowerSaveTimer(160, 600);
-#else
-        power_save_timer_ = new PowerSaveTimer(160, 60);
-#endif
-        power_save_timer_->OnEnterSleepMode([this]() {
-            ESP_LOGI(TAG, "Enabling sleep mode");
-            auto display = GetDisplay();
-            display->SetChatMessage("system", "");
-            display->SetEmotion("sleepy");
-            
-            auto codec = GetAudioCodec();
-            codec->EnableInput(false);
-        });
-        power_save_timer_->OnExitSleepMode([this]() {
-            auto codec = GetAudioCodec();
-            codec->EnableInput(true);
-            
-            auto display = GetDisplay();
-            display->SetChatMessage("system", "");
-            display->SetEmotion("neutral");
-        });
-        power_save_timer_->SetEnabled(false);
     }
 
     void InitializeCodecI2c() {
@@ -73,33 +44,34 @@ private:
     }
 
     void InitializeButtons() {
-        boot_button_.OnClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
-                ResetWifiConfiguration();
-            }
-            if (!press_to_talk_enabled_) {
-                app.ToggleChatState();
-            }
-        });
-        boot_button_.OnPressDown([this]() {
-            if (power_save_timer_) {
-                power_save_timer_->WakeUp();
-            }
-            if (press_to_talk_enabled_) {
-                Application::GetInstance().StartListening();
-            }
-        });
-        boot_button_.OnPressUp([this]() {
-            if (press_to_talk_enabled_) {
-                Application::GetInstance().StopListening();
-            }
-        });
+        // boot_button_.OnClick([this]() {
+        //     auto& app = Application::GetInstance();
+        //     if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
+        //         ResetWifiConfiguration();
+        //     }
+        //     if (!press_to_talk_enabled_) {
+        //         app.ToggleChatState();
+        //     }
+        // });
+        // boot_button_.OnPressDown([this]() {
+        //     if (power_save_timer_) {
+        //         power_save_timer_->WakeUp();
+        //     }
+        //     if (press_to_talk_enabled_) {
+        //         Application::GetInstance().StartListening();
+        //     }
+        // });
+        // boot_button_.OnPressUp([this]() {
+        //     if (press_to_talk_enabled_) {
+        //         Application::GetInstance().StopListening();
+        //     }
+        // });
     }
 
     void InitializeTools() {
-        Settings settings("vendor");
-        press_to_talk_enabled_ = settings.GetInt("press_to_talk", 0) != 0;
+        MyNVS nvs("vendor", NVS_READONLY);
+        press_to_talk_enabled_ = false;
+        nvs.read("press_to_talk", press_to_talk_enabled_);
 
 #if CONFIG_IOT_PROTOCOL_XIAOZHI
 #error "XiaoZhi 协议不支持"
@@ -126,7 +98,7 @@ private:
     }
 
 public:
-    Esp32c3CoreAdapterBoard() : boot_button_(BOOT_BUTTON_GPIO) {  
+    Esp32c3CoreAdapterBoard()  {  
         // 把 ESP32C3 的 VDD SPI 引脚作为普通 GPIO 口使用
         esp_efuse_write_field_bit(ESP_EFUSE_VDD_SPI_AS_GPIO);
 
@@ -137,10 +109,6 @@ public:
         InitializeTools();
     }
 
-    virtual Led* GetLed() override {
-        static SingleLed led(BUILTIN_LED_GPIO);
-        return &led;
-    }
 
     virtual Display* GetDisplay() override {
         return display_;
@@ -156,8 +124,8 @@ public:
     void SetPressToTalkEnabled(bool enabled) {
         press_to_talk_enabled_ = enabled;
 
-        Settings settings("vendor", true);
-        settings.SetInt("press_to_talk", enabled ? 1 : 0);
+        MyNVS nvs("vendor", NVS_READWRITE);
+        nvs.write("press_to_talk", enabled);
         ESP_LOGI(TAG, "Press to talk enabled: %d", enabled);
     }
 
@@ -167,9 +135,6 @@ public:
 
     virtual void SetPowerSaveMode(bool enabled) override {
         WifiBoard::SetPowerSaveMode(enabled);
-        if(power_save_timer_) {
-            power_save_timer_->SetEnabled(enabled);
-        }
     }
 };
 

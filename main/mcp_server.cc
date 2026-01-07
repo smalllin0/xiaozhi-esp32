@@ -66,19 +66,6 @@ void McpServer::AddCommonTools() {
             return true;
         });
     
-    auto backlight = board.GetBacklight();
-    if (backlight) {
-        AddTool("self.screen.set_brightness",
-            "Set the brightness of the screen.",
-            PropertyList({
-                Property("brightness", kPropertyTypeInteger, 0, 100)
-            }),
-            [backlight](const PropertyList& properties) -> ReturnValue {
-                uint8_t brightness = static_cast<uint8_t>(properties["brightness"].value<int>());
-                backlight->SetBrightness(brightness, true);
-                return true;
-            });
-    }
 
     auto display = board.GetDisplay();
     if (display && !display->GetTheme().empty()) {
@@ -93,25 +80,6 @@ void McpServer::AddCommonTools() {
             });
     }
 
-    auto camera = board.GetCamera();
-    if (camera) {
-        AddTool("self.camera.take_photo",
-            "Take a photo and explain it. Use this tool after the user asks you to see something.\n"
-            "Args:\n"
-            "  `question`: The question that you want to ask about the photo.\n"
-            "Return:\n"
-            "  A JSON object that provides the photo information.",
-            PropertyList({
-                Property("question", kPropertyTypeString)
-            }),
-            [camera](const PropertyList& properties) -> ReturnValue {
-                if (!camera->Capture()) {
-                    return "{\"success\": false, \"message\": \"Failed to capture photo\"}";
-                }
-                auto question = properties["question"].value<std::string>();
-                return camera->Explain(question);
-            });
-    }
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
@@ -148,15 +116,6 @@ void McpServer::ParseCapabilities(const cJSON* capabilities) {
         auto url = cJSON_GetObjectItem(vision, "url");
         auto token = cJSON_GetObjectItem(vision, "token");
         if (cJSON_IsString(url)) {
-            auto camera = Board::GetInstance().GetCamera();
-            if (camera) {
-                std::string url_str = std::string(url->valuestring);
-                std::string token_str;
-                if (cJSON_IsString(token)) {
-                    token_str = std::string(token->valuestring);
-                }
-                camera->SetExplainUrl(url_str, token_str);
-            }
         }
     }
 }

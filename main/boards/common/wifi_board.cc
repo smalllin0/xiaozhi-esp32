@@ -2,9 +2,8 @@
 
 #include "display.h"
 #include "application.h"
-#include "system_info.h"
-#include "font_awesome_symbols.h"
-#include "settings.h"
+#include "my_sysInfo.h"
+#include "my_nvs.hpp"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
@@ -12,19 +11,16 @@
 #include <esp_network.h>
 #include <esp_log.h>
 
-#include <wifi_station.h>
-#include <wifi_configuration_ap.h>
-#include <ssid_manager.h>
-#include "afsk_demod.h"
+#include "my_wifi.h"
 
 static const char *TAG = "WifiBoard";
 
 WifiBoard::WifiBoard() {
-    Settings settings("wifi", true);
-    wifi_config_mode_ = settings.GetInt("force_ap") == 1;
+    MyNVS nvs("wifi", NVS_READWRITE);
+    nvs.read("force_ap", wifi_config_mode_);
     if (wifi_config_mode_) {
         ESP_LOGI(TAG, "force_ap is set to 1, reset to 0");
-        settings.SetInt("force_ap", 0);
+        nvs.write("force_ap", false);
     }
 }
 
@@ -36,16 +32,17 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& application = Application::GetInstance();
     application.SetDeviceState(kDeviceStateWifiConfiguring);
 
-    auto& wifi_ap = WifiConfigurationAp::GetInstance();
-    wifi_ap.SetLanguage(Lang::CODE);
-    wifi_ap.SetSsidPrefix("Xiaozhi");
-    wifi_ap.Start();
+    auto& wifi = MyWifi::GetInstance();
+    // wifi.SetLanguage(Lang::CODE);
+    wifi.SetApSsid("Xiaozhi");
+    wifi.Start();
 
     // 显示 WiFi 配置 AP 的 SSID 和 Web 服务器 URL
     std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
-    hint += wifi_ap.GetSsid();
+    hint += wifi.GetSsid();
     hint += Lang::Strings::ACCESS_VIA_BROWSER;
-    hint += wifi_ap.GetWebServerUrl();
+    hint += "http://192.168.4.1";
+    // hint += wifi.GetWebServerUrl();
     hint += "\n\n";
     
     // 播报配置 WiFi 的提示
@@ -59,7 +56,7 @@ void WifiBoard::EnterWifiConfigMode() {
         channel = codec->input_channels();
     }
     ESP_LOGI(TAG, "Start receiving WiFi credentials from audio, input channels: %d", channel);
-    audio_wifi_config::ReceiveWifiCredentialsFromAudio(&application, &wifi_ap, display, channel);
+    audio_wifi_config::ReceiveWifiCredentialsFromAudio(&application, &wifi, display, channel);
     #endif
     
     // Wait forever until reset after configuration
@@ -76,37 +73,37 @@ void WifiBoard::StartNetwork() {
     }
 
     // If no WiFi SSID is configured, enter WiFi configuration mode
-    auto& ssid_manager = SsidManager::GetInstance();
-    auto ssid_list = ssid_manager.GetSsidList();
-    if (ssid_list.empty()) {
-        wifi_config_mode_ = true;
-        EnterWifiConfigMode();
-        return;
-    }
+    // auto& ssid_manager = SsidManager::GetInstance();
+    // auto ssid_list = ssid_manager.GetSsidList();
+    // if (ssid_list.empty()) {
+    //     wifi_config_mode_ = true;
+    //     EnterWifiConfigMode();
+    //     return;
+    // }
 
-    auto& wifi_station = WifiStation::GetInstance();
-    wifi_station.OnScanBegin([this]() {
+    auto& wifi = MyWifi::GetInstance();
+    wifi.OnScanBegin([this]() {
         auto display = Board::GetInstance().GetDisplay();
         display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
     });
-    wifi_station.OnConnect([this](const std::string& ssid) {
+    wifi.OnConnect([this](const std::string& ssid) {
         auto display = Board::GetInstance().GetDisplay();
         std::string notification = Lang::Strings::CONNECT_TO;
         notification += ssid;
         notification += "...";
         display->ShowNotification(notification.c_str(), 30000);
     });
-    wifi_station.OnConnected([this](const std::string& ssid) {
+    wifi.OnConnected([this](const std::string& ssid) {
         auto display = Board::GetInstance().GetDisplay();
         std::string notification = Lang::Strings::CONNECTED_TO;
         notification += ssid;
         display->ShowNotification(notification.c_str(), 30000);
     });
-    wifi_station.Start();
+    wifi.Start();
 
     // Try to connect to WiFi, if failed, launch the WiFi configuration AP
-    if (!wifi_station.WaitForConnected(60 * 1000)) {
-        wifi_station.Stop();
+    if (!wifi.WaitForConnected(60 * 1000)) {
+        // wifi.Stop();
         wifi_config_mode_ = true;
         EnterWifiConfigMode();
         return;
@@ -119,34 +116,20 @@ NetworkInterface* WifiBoard::GetNetwork() {
 }
 
 const char* WifiBoard::GetNetworkStateIcon() {
-    if (wifi_config_mode_) {
-        return FONT_AWESOME_WIFI;
-    }
-    auto& wifi_station = WifiStation::GetInstance();
-    if (!wifi_station.IsConnected()) {
-        return FONT_AWESOME_WIFI_OFF;
-    }
-    int8_t rssi = wifi_station.GetRssi();
-    if (rssi >= -60) {
-        return FONT_AWESOME_WIFI;
-    } else if (rssi >= -70) {
-        return FONT_AWESOME_WIFI_FAIR;
-    } else {
-        return FONT_AWESOME_WIFI_WEAK;
-    }
+    return "";
 }
 
 std::string WifiBoard::GetBoardJson() {
     // Set the board type for OTA
-    auto& wifi_station = WifiStation::GetInstance();
+    auto& wifi = MyWifi::GetInstance();
     std::string board_json = R"({)";
     board_json += R"("type":")" + std::string(BOARD_TYPE) + R"(",)";
     board_json += R"("name":")" + std::string(BOARD_NAME) + R"(",)";
     if (!wifi_config_mode_) {
-        board_json += R"("ssid":")" + wifi_station.GetSsid() + R"(",)";
-        board_json += R"("rssi":)" + std::to_string(wifi_station.GetRssi()) + R"(,)";
-        board_json += R"("channel":)" + std::to_string(wifi_station.GetChannel()) + R"(,)";
-        board_json += R"("ip":")" + wifi_station.GetIpAddress() + R"(",)";
+        board_json += R"("ssid":")" + wifi.GetSsid() + R"(",)";
+        board_json += R"("rssi":)" + std::to_string(wifi.GetRssi()) + R"(,)";
+        board_json += R"("channel":)" + std::to_string(wifi.GetChannel()) + R"(,)";
+        board_json += R"("ip":")" + wifi.GetIpAddress() + R"(",)";
     }
     board_json += R"("mac":")" + SystemInfo::GetMacAddress() + R"(")";
     board_json += R"(})";
@@ -154,15 +137,15 @@ std::string WifiBoard::GetBoardJson() {
 }
 
 void WifiBoard::SetPowerSaveMode(bool enabled) {
-    auto& wifi_station = WifiStation::GetInstance();
-    wifi_station.SetPowerSaveMode(enabled);
+    auto& wifi = MyWifi::GetInstance();
+    wifi.SetPowerSaveMode(enabled);
 }
 
 void WifiBoard::ResetWifiConfiguration() {
     // Set a flag and reboot the device to enter the network configuration mode
     {
-        Settings settings("wifi", true);
-        settings.SetInt("force_ap", 1);
+        MyNVS nvs("wifi", NVS_READWRITE);
+        nvs.write("force_ap", true);
     }
     GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -209,11 +192,8 @@ std::string WifiBoard::GetDeviceStatusJson() {
     cJSON_AddItemToObject(root, "audio_speaker", audio_speaker);
 
     // Screen brightness
-    auto backlight = board.GetBacklight();
     auto screen = cJSON_CreateObject();
-    if (backlight) {
-        cJSON_AddNumberToObject(screen, "brightness", backlight->brightness());
-    }
+
     auto display = board.GetDisplay();
     if (display && display->height() > 64) { // For LCD display only
         cJSON_AddStringToObject(screen, "theme", display->GetTheme().c_str());
@@ -233,10 +213,10 @@ std::string WifiBoard::GetDeviceStatusJson() {
 
     // Network
     auto network = cJSON_CreateObject();
-    auto& wifi_station = WifiStation::GetInstance();
+    auto& wifi = MyWifi::GetInstance();
     cJSON_AddStringToObject(network, "type", "wifi");
-    cJSON_AddStringToObject(network, "ssid", wifi_station.GetSsid().c_str());
-    int rssi = wifi_station.GetRssi();
+    cJSON_AddStringToObject(network, "ssid", wifi.GetSsid().c_str());
+    int rssi = wifi.GetRssi();
     if (rssi >= -60) {
         cJSON_AddStringToObject(network, "signal", "strong");
     } else if (rssi >= -70) {

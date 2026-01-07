@@ -1,6 +1,6 @@
 #include "board.h"
-#include "system_info.h"
-#include "settings.h"
+#include "my_sysInfo.h"
+#include "my_nvs.hpp"
 #include "display/display.h"
 #include "assets/lang_config.h"
 
@@ -12,11 +12,11 @@
 #define TAG "Board"
 
 Board::Board() {
-    Settings settings("board", true);
-    uuid_ = settings.GetString("uuid");
+    MyNVS nvs("board", NVS_READWRITE);
+    nvs.read("uuid", uuid_);
     if (uuid_.empty()) {
         uuid_ = GenerateUuid();
-        settings.SetString("uuid", uuid_);
+        nvs.write("uuid", uuid_);
     }
     ESP_LOGI(TAG, "UUID=%s SKU=%s", uuid_.c_str(), BOARD_NAME);
 }
@@ -57,14 +57,7 @@ Display* Board::GetDisplay() {
     return &display;
 }
 
-Camera* Board::GetCamera() {
-    return nullptr;
-}
 
-Led* Board::GetLed() {
-    static NoLed led;
-    return &led;
-}
 
 std::string Board::GetJson() {
     /* 
@@ -108,7 +101,8 @@ std::string Board::GetJson() {
     */
     std::string json = R"({"version":2,"language":")" + std::string(Lang::CODE) + R"(",)";
     json += R"("flash_size":)" + std::to_string(SystemInfo::GetFlashSize()) + R"(,)";
-    json += R"("minimum_free_heap_size":")" + std::to_string(SystemInfo::GetMinimumFreeHeapSize()) + R"(",)";
+    json += R"("minimum_free_heap_size":")" + std::to_string(666666) + R"(",)";
+    // json += R"("minimum_free_heap_size":")" + std::to_string(SystemInfo::GetMinimumFreeHeapSize()) + R"(",)";
     json += R"("mac_address":")" + SystemInfo::GetMacAddress() + R"(",)";
     json += R"("uuid":")" + uuid_ + R"(",)";
     json += R"("chip_model_name":")" + SystemInfo::GetChipModelName() + R"(",)";

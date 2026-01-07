@@ -1,8 +1,8 @@
 #include "websocket_protocol.h"
 #include "board.h"
-#include "system_info.h"
+#include "my_sysInfo.h"
 #include "application.h"
-#include "settings.h"
+#include "my_nvs.hpp"
 
 #include <cstring>
 #include <cJSON.h>
@@ -80,10 +80,12 @@ void WebsocketProtocol::CloseAudioChannel() {
 }
 
 bool WebsocketProtocol::OpenAudioChannel() {
-    Settings settings("websocket", false);
-    std::string url = settings.GetString("url");
-    std::string token = settings.GetString("token");
-    int version = settings.GetInt("version");
+    MyNVS nvs("websocket", NVS_READONLY);
+    std::string url, token;
+    nvs.read("url", url);
+    nvs.read("token", token);
+    int version = 0;
+    nvs.read("version", version);
     if (version != 0) {
         version_ = version;
     }

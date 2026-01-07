@@ -7,6 +7,7 @@
 
 #include "audio_codec.h"
 
+/// @brief 音频处理器类
 class AudioProcessor {
 public:
     virtual ~AudioProcessor() = default;

@@ -18,7 +18,6 @@
 
 #include "audio_codec.h"
 #include "audio_processor.h"
-#include "processors/audio_debugger.h"
 #include "wake_word.h"
 #include "protocol.h"
 
@@ -112,7 +111,6 @@ private:
     AudioServiceCallbacks callbacks_;
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
-    std::unique_ptr<AudioDebugger> audio_debugger_;
     std::unique_ptr<OpusEncoderWrapper> opus_encoder_;
     std::unique_ptr<OpusDecoderWrapper> opus_decoder_;
     OpusResampler input_resampler_;
