@@ -12,7 +12,7 @@ public:
     virtual ~WakeWord() = default;
     /// @brief 初始化
     virtual bool Initialize(AudioCodec* codec) = 0;
-    /// @brief 
+    /// @brief 将音频数据投喂到唤醒词模型，检测到唤醒词时调用相应的回调函数
     virtual void Feed(const std::vector<int16_t>& data) = 0;
     /// @brief 设置唤醒词回调
     virtual void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) = 0;

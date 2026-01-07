@@ -45,22 +45,19 @@
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
 
 
-#define AS_EVENT_AUDIO_TESTING_RUNNING      (1 << 0)
-#define AS_EVENT_WAKE_WORD_RUNNING          (1 << 1)
-#define AS_EVENT_AUDIO_PROCESSOR_RUNNING    (1 << 2)
-#define AS_EVENT_PLAYBACK_NOT_EMPTY         (1 << 3)
+#define AS_EVENT_WAKE_WORD_RUNNING          BIT1
+#define AS_EVENT_AUDIO_PROCESSOR_RUNNING    BIT2
+#define AS_EVENT_PLAYBACK_NOT_EMPTY         BIT3
 
 struct AudioServiceCallbacks {
     std::function<void(void)> on_send_queue_available;
     std::function<void(const std::string&)> on_wake_word_detected;
     std::function<void(bool)> on_vad_change;
-    std::function<void(void)> on_audio_testing_queue_full;
 };
 
 
 enum AudioTaskType {
     kAudioTaskTypeEncodeToSendQueue,
-    kAudioTaskTypeEncodeToTestingQueue,
     kAudioTaskTypeDecodeToPlaybackQueue,
 };
 
@@ -70,17 +67,22 @@ struct AudioTask {
     uint32_t timestamp;
 };
 
-struct DebugStatistics {
-    uint32_t input_count = 0;
-    uint32_t decode_count = 0;
-    uint32_t encode_count = 0;
-    uint32_t playback_count = 0;
-};
 
 class AudioService {
 public:
-    AudioService();
-    ~AudioService();
+    AudioService() {
+        event_group_ = xEventGroupCreate();
+    }
+    ~AudioService() {
+        if (event_group_ != nullptr) {
+            vEventGroupDelete(event_group_);
+        }
+    }
+
+
+
+
+
 
     void Initialize(AudioCodec* codec);
     void Start();
@@ -95,7 +97,6 @@ public:
 
     void EnableWakeWordDetection(bool enable);
     void EnableVoiceProcessing(bool enable);
-    void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
@@ -108,7 +109,7 @@ public:
 
 private:
     AudioCodec* codec_ = nullptr;
-    AudioServiceCallbacks callbacks_;
+    AudioServiceCallbacks callbacks_;                   // 音频服务回调
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
     std::unique_ptr<OpusEncoderWrapper> opus_encoder_;
@@ -116,7 +117,6 @@ private:
     OpusResampler input_resampler_;
     OpusResampler reference_resampler_;
     OpusResampler output_resampler_;
-    DebugStatistics debug_statistics_;
 
     EventGroupHandle_t event_group_;
 
@@ -128,7 +128,6 @@ private:
     std::condition_variable audio_queue_cv_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_;
-    std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
     // For server AEC
@@ -140,7 +139,7 @@ private:
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
 
-    esp_timer_handle_t audio_power_timer_ = nullptr;
+    esp_timer_handle_t audio_power_timer_ = nullptr;            // 电源管理定时器
     std::chrono::steady_clock::time_point last_input_time_;
     std::chrono::steady_clock::time_point last_output_time_;
 

@@ -20,17 +20,8 @@
 #define TAG "AudioService"
 
 
-AudioService::AudioService() {
-    event_group_ = xEventGroupCreate();
-}
 
-AudioService::~AudioService() {
-    if (event_group_ != nullptr) {
-        vEventGroupDelete(event_group_);
-    }
-}
-
-
+/// @brief 初始化音频服务
 void AudioService::Initialize(AudioCodec* codec) {
     codec_ = codec;
     codec_->Start();
@@ -45,21 +36,10 @@ void AudioService::Initialize(AudioCodec* codec) {
         reference_resampler_.Configure(codec->input_sample_rate(), 16000);
     }
 
-#if CONFIG_USE_AUDIO_PROCESSOR
-    audio_processor_ = std::make_unique<AfeAudioProcessor>();
-#else
-    audio_processor_ = std::make_unique<NoAudioProcessor>();
-#endif
 
-#if CONFIG_USE_AFE_WAKE_WORD
-    wake_word_ = std::make_unique<AfeWakeWord>();
-#elif CONFIG_USE_ESP_WAKE_WORD
+    audio_processor_ = std::make_unique<NoAudioProcessor>();
     wake_word_ = std::make_unique<EspWakeWord>();
-#elif CONFIG_USE_CUSTOM_WAKE_WORD
-    wake_word_ = std::make_unique<CustomWakeWord>();
-#else
-    wake_word_ = nullptr;
-#endif
+
 
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
@@ -95,26 +75,13 @@ void AudioService::Initialize(AudioCodec* codec) {
 
 void AudioService::Start() {
     service_stopped_ = false;
-    xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING | AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+    xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
 
     esp_timer_start_periodic(audio_power_timer_, 1000000);
 
-#if CONFIG_USE_AUDIO_PROCESSOR
-    /* Start the audio input task */
-    xTaskCreatePinnedToCore([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioInputTask();
-        vTaskDelete(NULL);
-    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 1);
 
-    /* Start the audio output task */
-    xTaskCreate([](void* arg) {
-        AudioService* audio_service = (AudioService*)arg;
-        audio_service->AudioOutputTask();
-        vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 3, &audio_output_task_handle_);
-#else
-    /* Start the audio input task */
+    /* Start the audio input task */ 
+    //高优先级
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioInputTask();
@@ -122,14 +89,16 @@ void AudioService::Start() {
     }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 
     /* Start the audio output task */
+    // 中优先级
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
     }, "audio_output", 2048, this, 3, &audio_output_task_handle_);
-#endif
+
 
     /* Start the opus codec task */
+    // 低优先级
     xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
@@ -140,15 +109,12 @@ void AudioService::Start() {
 void AudioService::Stop() {
     esp_timer_stop(audio_power_timer_);
     service_stopped_ = true;
-    xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
-        AS_EVENT_WAKE_WORD_RUNNING |
-        AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+    xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
 
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     audio_encode_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
-    audio_testing_queue_.clear();
     audio_queue_cv_.notify_all();
 }
 
@@ -194,23 +160,13 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
 
     /* Update the last input time */
     last_input_time_ = std::chrono::steady_clock::now();
-    debug_statistics_.input_count++;
-
-#if CONFIG_USE_AUDIO_DEBUGGER
-    // 音频调试：发送原始音频数据
-    if (audio_debugger_ == nullptr) {
-        audio_debugger_ = std::make_unique<AudioDebugger>();
-    }
-    audio_debugger_->Feed(data);
-#endif
 
     return true;
 }
 
 void AudioService::AudioInputTask() {
     while (true) {
-        EventBits_t bits = xEventGroupWaitBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
-            AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING,
+        EventBits_t bits = xEventGroupWaitBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING,
             pdFALSE, pdFALSE, portMAX_DELAY);
 
         if (service_stopped_) {
@@ -222,28 +178,6 @@ void AudioService::AudioInputTask() {
             continue;
         }
 
-        /* Used for audio testing in NetworkConfiguring mode by clicking the BOOT button */
-        if (bits & AS_EVENT_AUDIO_TESTING_RUNNING) {
-            if (audio_testing_queue_.size() >= AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS) {
-                ESP_LOGW(TAG, "Audio testing queue is full, stopping audio testing");
-                EnableAudioTesting(false);
-                continue;
-            }
-            std::vector<int16_t> data;
-            int samples = OPUS_FRAME_DURATION_MS * 16000 / 1000;
-            if (ReadAudioData(data, 16000, samples)) {
-                // If input channels is 2, we need to fetch the left channel data
-                if (codec_->input_channels() == 2) {
-                    auto mono_data = std::vector<int16_t>(data.size() / 2);
-                    for (size_t i = 0, j = 0; i < mono_data.size(); ++i, j += 2) {
-                        mono_data[i] = data[j];
-                    }
-                    data = std::move(mono_data);
-                }
-                PushTaskToEncodeQueue(kAudioTaskTypeEncodeToTestingQueue, std::move(data));
-                continue;
-            }
-        }
 
         /* Feed the wake word */
         if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
@@ -276,6 +210,7 @@ void AudioService::AudioInputTask() {
     ESP_LOGW(TAG, "Audio input task stopped");
 }
 
+/// @brief 音频输出任务
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
@@ -298,7 +233,6 @@ void AudioService::AudioOutputTask() {
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
-        debug_statistics_.playback_count++;
 
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
@@ -352,7 +286,6 @@ void AudioService::OpusCodecTask() {
                 ESP_LOGE(TAG, "Failed to decode audio");
                 lock.lock();
             }
-            debug_statistics_.decode_count++;
         }
         
         /* Encode the audio to send queue */
@@ -379,11 +312,7 @@ void AudioService::OpusCodecTask() {
                 if (callbacks_.on_send_queue_available) {
                     callbacks_.on_send_queue_available();
                 }
-            } else if (task->type == kAudioTaskTypeEncodeToTestingQueue) {
-                std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-                audio_testing_queue_.push_back(std::move(packet));
             }
-            debug_statistics_.encode_count++;
             lock.lock();
         }
     }
@@ -429,6 +358,9 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
     audio_queue_cv_.notify_all();
 }
 
+/// @brief 将音频流数据包放入解码队列
+/// @param packet 音频数据包
+/// @param wait 是否等待
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
@@ -472,6 +404,7 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopWakeWordPacket() {
     return nullptr;
 }
 
+/// @brief 启动/关闭唤醒词检测
 void AudioService::EnableWakeWordDetection(bool enable) {
     if (!wake_word_) {
         return;
@@ -513,19 +446,6 @@ void AudioService::EnableVoiceProcessing(bool enable) {
     }
 }
 
-void AudioService::EnableAudioTesting(bool enable) {
-    ESP_LOGI(TAG, "%s audio testing", enable ? "Enabling" : "Disabling");
-    if (enable) {
-        xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING);
-    } else {
-        xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING);
-        /* Copy audio_testing_queue_ to audio_decode_queue_ */
-        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-        audio_decode_queue_ = std::move(audio_testing_queue_);
-        audio_queue_cv_.notify_all();
-    }
-}
-
 void AudioService::EnableDeviceAec(bool enable) {
     ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
     if (!audio_processor_initialized_) {
@@ -540,6 +460,7 @@ void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) {
     callbacks_ = callbacks;
 }
 
+/// @brief 播放Ogg格式的音频
 void AudioService::PlaySound(const std::string_view& ogg) {
     const uint8_t* buf = reinterpret_cast<const uint8_t*>(ogg.data());
     size_t size = ogg.size();
@@ -557,6 +478,7 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     int sample_rate = 16000; // 默认值
 
     while (true) {
+        // size_t pos = strstr((const char*)buf + offset, "Oggs");
         size_t pos = find_page(offset);
         if (pos == static_cast<size_t>(-1)) break;
         offset = pos;
@@ -635,7 +557,7 @@ void AudioService::PlaySound(const std::string_view& ogg) {
 
 bool AudioService::IsIdle() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    return audio_encode_queue_.empty() && audio_decode_queue_.empty() && audio_playback_queue_.empty() && audio_testing_queue_.empty();
+    return audio_encode_queue_.empty() && audio_decode_queue_.empty() && audio_playback_queue_.empty();
 }
 
 void AudioService::ResetDecoder() {
@@ -644,10 +566,10 @@ void AudioService::ResetDecoder() {
     timestamp_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
-    audio_testing_queue_.clear();
     audio_queue_cv_.notify_all();
 }
 
+/// @brief 电源管理定时器
 void AudioService::CheckAndUpdateAudioPowerState() {
     auto now = std::chrono::steady_clock::now();
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();

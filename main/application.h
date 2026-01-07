@@ -65,6 +65,11 @@ private:
     Application();
     ~Application();
 
+    // 自己的实现
+    void HandleWakeWordDetected();
+
+
+
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
     std::unique_ptr<Protocol> protocol_;
