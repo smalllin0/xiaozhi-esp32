@@ -2,6 +2,7 @@
 #include <esp_log.h>
 #include <cstring>
 #include "board.h"
+#include "my_background.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "processors/afe_audio_processor.h"
@@ -19,7 +20,10 @@
 
 #define TAG "AudioService"
 
-
+struct output_t {
+    AudioService*           service;
+    std::vector<int16_t>    data;
+};
 
 /// @brief 初始化音频服务
 void AudioService::Initialize(AudioCodec* codec) {
@@ -41,8 +45,22 @@ void AudioService::Initialize(AudioCodec* codec) {
     wake_word_ = std::make_unique<EspWakeWord>();
 
 
-    audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
-        PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
+    // 创建编码任务
+    audio_processor_->OnOutput([this](std::vector<int16_t>&& data){
+        auto& bg = MyBackground::GetInstance();
+        auto* dat = new output_t;
+        dat->service = this;
+        dat->data = std::move(data);
+        bg.Schedule([](void* arg){
+                auto* self = ((output_t*)arg)->service;
+                self->EncodeAudio(std::move(((output_t*)arg)->data));
+            },
+            "Encode",
+            dat,
+            [](void* arg) {
+                delete (output_t*)arg;
+            }
+        );
     });
 
     audio_processor_->OnVadStateChange([this](bool speaking) {
@@ -582,5 +600,31 @@ void AudioService::CheckAndUpdateAudioPowerState() {
     }
     if (!codec_->input_enabled() && !codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
+    }
+}
+
+void AudioService::EncodeAudio(std::vector<int16_t>&& data)
+{
+
+    auto packet = std::make_unique<AudioStreamPacket>();
+    packet->frame_duration = OPUS_FRAME_DURATION_MS;
+    packet->sample_rate = 16000;
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        if (!timestamp_queue_.empty()) {
+            packet->timestamp = timestamp_queue_.front();
+            timestamp_queue_.pop_front();
+        }
+    }
+    if (!opus_encoder_->Encode(std::move(data), packet->payload)) {
+        ESP_LOGE(TAG, "Failed to encode audio");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_send_queue_.push_back(std::move(packet));
+    }
+    if (callbacks_.on_send_queue_available) {
+        callbacks_.on_send_queue_available();
     }
 }

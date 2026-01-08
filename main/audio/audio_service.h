@@ -108,6 +108,8 @@ public:
     void ResetDecoder();
 
 private:
+    void EncodeAudio(std::vector<int16_t>&& data);
+
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;                   // 音频服务回调
     std::unique_ptr<AudioProcessor> audio_processor_;
