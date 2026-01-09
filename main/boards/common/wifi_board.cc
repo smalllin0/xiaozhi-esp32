@@ -35,7 +35,6 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& wifi = MyWifi::GetInstance();
     // wifi.SetLanguage(Lang::CODE);
     wifi.SetApSsid("Xiaozhi");
-    wifi.Start();
 
     // 显示 WiFi 配置 AP 的 SSID 和 Web 服务器 URL
     std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
@@ -60,28 +59,19 @@ void WifiBoard::EnterWifiConfigMode() {
     #endif
     
     // Wait forever until reset after configuration
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
+    wifi.EnterConfigMode();
 }
 
 void WifiBoard::StartNetwork() {
     // User can press BOOT button while starting to enter WiFi configuration mode
-    if (wifi_config_mode_) {
+    auto& wifi = MyWifi::GetInstance();
+    wifi.Start();
+
+    if (wifi_config_mode_ || !wifi.GetSaveAuthCount()) {
         EnterWifiConfigMode();
         return;
     }
 
-    // If no WiFi SSID is configured, enter WiFi configuration mode
-    // auto& ssid_manager = SsidManager::GetInstance();
-    // auto ssid_list = ssid_manager.GetSsidList();
-    // if (ssid_list.empty()) {
-    //     wifi_config_mode_ = true;
-    //     EnterWifiConfigMode();
-    //     return;
-    // }
-
-    auto& wifi = MyWifi::GetInstance();
     wifi.OnScanBegin([this]() {
         auto display = Board::GetInstance().GetDisplay();
         display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
@@ -99,11 +89,10 @@ void WifiBoard::StartNetwork() {
         notification += ssid;
         display->ShowNotification(notification.c_str(), 30000);
     });
-    wifi.Start();
+    
 
     // Try to connect to WiFi, if failed, launch the WiFi configuration AP
     if (!wifi.WaitForConnected(60 * 1000)) {
-        // wifi.Stop();
         wifi_config_mode_ = true;
         EnterWifiConfigMode();
         return;

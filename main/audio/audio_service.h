@@ -67,17 +67,24 @@ struct AudioTask {
     uint32_t timestamp;
 };
 
+class AudioService;
+struct decode_t {
+    AudioService*   service;
+    int             sample_rate;
+    int             frame_duration;
+    std::vector<uint8_t>    data;
+};
+
 
 class AudioService {
 public:
-    AudioService() {
-        event_group_ = xEventGroupCreate();
-    }
+    AudioService();
     ~AudioService() {
         if (event_group_ != nullptr) {
             vEventGroupDelete(event_group_);
         }
     }
+    void DecodeAudio(std::vector<uint8_t> data, int sample_rate, int frame_duration);   // 后续要放到private中
 
 
 
@@ -101,7 +108,7 @@ public:
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
-    bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    // bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
@@ -109,6 +116,8 @@ public:
 
 private:
     void EncodeAudio(std::vector<int16_t>&& data);
+    TimerHandle_t    wake_word_timer_{nullptr};
+    TimerHandle_t    voice_process_timer_{nullptr};
 
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;                   // 音频服务回调
@@ -124,14 +133,9 @@ private:
 
     // Audio encode / decode
     TaskHandle_t audio_input_task_handle_ = nullptr;
-    TaskHandle_t audio_output_task_handle_ = nullptr;
-    TaskHandle_t opus_codec_task_handle_ = nullptr;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
-    std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_;
-    std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
-    std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 
@@ -146,9 +150,6 @@ private:
     std::chrono::steady_clock::time_point last_output_time_;
 
     void AudioInputTask();
-    void AudioOutputTask();
-    void OpusCodecTask();
-    void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();
 };

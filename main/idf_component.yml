@@ -2,7 +2,7 @@
 dependencies:
   smallin/my-sysinfo: '>=1.0.0'
   smallin/my-nvs: '>=1.1.0'
-  smallin/my-wifi: '>=1.1.7'
+  smallin/my-wifi: '>=1.1.8'
   smallin/my-background: '>=1.1.1'
 
   espressif/esp_io_expander_tca9554: ==2.0.0

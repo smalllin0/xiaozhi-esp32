@@ -376,7 +376,26 @@ void Application::Start() {
     });
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (device_state_ == kDeviceStateSpeaking) {
-            audio_service_.PushPacketToDecodeQueue(std::move(packet));
+            // audio_service_.PushPacketToDecodeQueue(std::move(packet));
+            // 生成后台解码
+            auto* decode = new decode_t;
+            decode->sample_rate = packet->sample_rate;
+            decode->service = &audio_service_;
+            decode->data = std::move(packet->payload);
+            decode->frame_duration = packet->frame_duration;
+            auto& bg = MyBackground::GetInstance();
+            bg.Schedule([](void* arg){
+                    auto* decode_data = (decode_t*)arg;
+                    auto* service = decode_data->service;
+                    auto& data = decode_data->data;
+                    service->DecodeAudio(std::move(data), decode_data->sample_rate, decode_data->frame_duration);
+                }, 
+                "Decode", 
+                decode, 
+                [](void*arg){
+                    delete (decode_t*)arg;
+                }
+            );
         }
     });
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
