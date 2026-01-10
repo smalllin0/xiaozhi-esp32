@@ -74,9 +74,13 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             auto session_id = cJSON_GetObjectItem(root, "session_id");
             ESP_LOGI(TAG, "Received goodbye message, session_id: %s", session_id ? session_id->valuestring : "null");
             if (session_id == nullptr || session_id_ == session_id->valuestring) {
-                Application::GetInstance().Schedule([this]() {
-                    CloseAudioChannel();
-                });
+                MyBackground::GetInstance().Schedule([](void* arg){
+                        auto* self = (MqttProtocol*)arg;
+                        self->CloseAudioChannel();
+                    }, 
+                    "CloseAudio", 
+                    this
+                );
             }
         } else if (on_incoming_json_ != nullptr) {
             on_incoming_json_(root);

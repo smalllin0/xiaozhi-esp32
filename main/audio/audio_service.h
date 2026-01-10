@@ -47,7 +47,6 @@
 
 #define AS_EVENT_WAKE_WORD_RUNNING          BIT1
 #define AS_EVENT_AUDIO_PROCESSOR_RUNNING    BIT2
-#define AS_EVENT_PLAYBACK_NOT_EMPTY         BIT3
 
 struct AudioServiceCallbacks {
     std::function<void(void)> on_send_queue_available;
@@ -67,6 +66,7 @@ struct AudioTask {
     uint32_t timestamp;
 };
 
+/***************** */
 class AudioService;
 struct decode_t {
     AudioService*   service;
@@ -74,7 +74,8 @@ struct decode_t {
     int             frame_duration;
     std::vector<uint8_t>    data;
 };
-
+typedef bool (*SendFun_t)(std::unique_ptr<AudioStreamPacket>& packet);
+/*********** */
 
 class AudioService {
 public:
@@ -85,7 +86,19 @@ public:
         }
     }
     void DecodeAudio(std::vector<uint8_t> data, int sample_rate, int frame_duration);   // 后续要放到private中
-
+    
+    /// @brief 设置服务所需的回调函数
+    void SetCallbacks(AudioServiceCallbacks& callbacks) {
+        callbacks_ = callbacks;
+    }
+    /// @brief 获取最后一次的唤醒词
+    const std::string& GetLastWakeWord() const {
+        return wake_word_->GetLastDetectedWakeWord();
+    }
+    /// @brief 将唤醒词音频进行编码
+    void EncodeWakeWord() {
+        if (wake_word_) wake_word_->EncodeWakeWordData();
+    }
 
 
 
@@ -94,9 +107,7 @@ public:
     void Initialize(AudioCodec* codec);
     void Start();
     void Stop();
-    void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
-    const std::string& GetLastWakeWord() const;
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
@@ -106,7 +117,6 @@ public:
     void EnableVoiceProcessing(bool enable);
     void EnableDeviceAec(bool enable);
 
-    void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     // bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
@@ -116,13 +126,22 @@ public:
 
 private:
     void EncodeAudio(std::vector<int16_t>&& data);
-    TimerHandle_t    wake_word_timer_{nullptr};
-    TimerHandle_t    voice_process_timer_{nullptr};
+
+    TimerHandle_t               wake_word_timer_{nullptr};      // 唤醒词定时器
+    TimerHandle_t               voice_process_timer_{nullptr};  // 音频处理定时器
+    SendFun_t                   send_fn_{nullptr};              // 发送回调
+    std::unique_ptr<WakeWord>   wake_word_;                     // 唤醒词句柄
+
+
+
+
+
+
+    /* .............................................. */
 
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;                   // 音频服务回调
     std::unique_ptr<AudioProcessor> audio_processor_;
-    std::unique_ptr<WakeWord> wake_word_;
     std::unique_ptr<OpusEncoderWrapper> opus_encoder_;
     std::unique_ptr<OpusDecoderWrapper> opus_decoder_;
     OpusResampler input_resampler_;

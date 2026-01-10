@@ -16,11 +16,10 @@
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state_event.h"
+#include "my_background.h"
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
 #define MAIN_EVENT_SEND_AUDIO (1 << 1)
-#define MAIN_EVENT_WAKE_WORD_DETECTED (1 << 2)
-#define MAIN_EVENT_VAD_CHANGE (1 << 3)
 #define MAIN_EVENT_ERROR (1 << 4)
 #define MAIN_EVENT_CHECK_NEW_VERSION_DONE (1 << 5)
 
@@ -67,6 +66,9 @@ private:
 
     // 自己的实现
     void HandleWakeWordDetected();
+
+    MyBackground& 	bg_;
+
 
 
 

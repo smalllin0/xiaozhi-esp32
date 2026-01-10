@@ -34,7 +34,9 @@ static const char* const STATE_STRINGS[] = {
     "invalid_state"
 };
 
-Application::Application() {
+Application::Application() 
+    : bg_(MyBackground::GetInstance())
+{
     event_group_ = xEventGroupCreate();
     aec_mode_ = kAecOff;
 
@@ -232,27 +234,32 @@ void Application::ToggleChatState() {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
-
-    if (device_state_ == kDeviceStateIdle) {
-        Schedule([this]() {
-            if (!protocol_->IsAudioChannelOpened()) {
-                SetDeviceState(kDeviceStateConnecting);
-                if (!protocol_->OpenAudioChannel()) {
-                    return;
+    bg_.Schedule([](void* arg){
+            auto* app = (Application*)arg;
+            switch (app->device_state_) {
+              case kDeviceStateIdle:
+                if (!app->protocol_->IsAudioChannelOpened()) {
+                    app->SetDeviceState(kDeviceStateConnecting);
+                    if (!app->protocol_->OpenAudioChannel()) {
+                        return;
+                    }
                 }
+                app->SetListeningMode(app->aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
+                break;
+              case kDeviceStateSpeaking:
+                app->AbortSpeaking(kAbortReasonNone);
+                break;
+              case kDeviceStateListening:
+                app->protocol_->CloseAudioChannel();
+                break;
+              default:
+                ESP_LOGE(TAG, "Error state");
+                break;
             }
-
-            SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
-        });
-    } else if (device_state_ == kDeviceStateSpeaking) {
-        Schedule([this]() {
-            AbortSpeaking(kAbortReasonNone);
-        });
-    } else if (device_state_ == kDeviceStateListening) {
-        Schedule([this]() {
-            protocol_->CloseAudioChannel();
-        });
-    }
+        }, 
+        "ToggleChat", 
+        this
+    );
 }
 
 void Application::StartListening() {
@@ -265,24 +272,31 @@ void Application::StartListening() {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
-    
-    if (device_state_ == kDeviceStateIdle) {
-        Schedule([this]() {
-            if (!protocol_->IsAudioChannelOpened()) {
-                SetDeviceState(kDeviceStateConnecting);
-                if (!protocol_->OpenAudioChannel()) {
-                    return;
-                }
-            }
 
-            SetListeningMode(kListeningModeManualStop);
-        });
-    } else if (device_state_ == kDeviceStateSpeaking) {
-        Schedule([this]() {
-            AbortSpeaking(kAbortReasonNone);
-            SetListeningMode(kListeningModeManualStop);
-        });
-    }
+    bg_.Schedule([](void* arg){
+            auto* app = (Application*)arg;
+            switch (app->device_state_) {
+              case kDeviceStateIdle:
+                if (!app->protocol_->IsAudioChannelOpened()) {
+                    app->SetDeviceState(kDeviceStateConnecting);
+                    if (!app->protocol_->OpenAudioChannel()) {
+                        return;
+                    }
+                }
+                app->SetListeningMode(kListeningModeAutoStop);
+                break;
+              case kDeviceStateSpeaking:
+                app->AbortSpeaking(kAbortReasonNone);
+                app->SetListeningMode(kListeningModeManualStop);
+                break;
+              default:
+                ESP_LOGE(TAG, "Error state");
+                break;
+            }
+        }, 
+        "StartListen", 
+        this
+    );
 }
 
 void Application::StopListening() {
@@ -297,12 +311,16 @@ void Application::StopListening() {
         return;
     }
 
-    Schedule([this]() {
-        if (device_state_ == kDeviceStateListening) {
-            protocol_->SendStopListening();
-            SetDeviceState(kDeviceStateIdle);
-        }
-    });
+    if (device_state_ == kDeviceStateListening) {
+        bg_.Schedule([](void* arg){
+                auto* app = (Application*)arg;
+                app->protocol_->SendStopListening();
+                app->SetDeviceState(kDeviceStateIdle);
+            }, 
+            "StopListen", 
+            this
+        );
+    }
 }
 
 void Application::Start() {
@@ -324,8 +342,7 @@ void Application::Start() {
 
     // 唤醒词检测成功回调
     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
-        auto& bg = MyBackground::GetInstance();
-        bg.Schedule([](void* arg){
+        bg_.Schedule([](void* arg){
                 ((Application*)arg)->HandleWakeWordDetected();
             }, 
             "wake_det",
@@ -383,8 +400,7 @@ void Application::Start() {
             decode->service = &audio_service_;
             decode->data = std::move(packet->payload);
             decode->frame_duration = packet->frame_duration;
-            auto& bg = MyBackground::GetInstance();
-            bg.Schedule([](void* arg){
+            bg_.Schedule([](void* arg){
                     auto* decode_data = (decode_t*)arg;
                     auto* service = decode_data->service;
                     auto& data = decode_data->data;
@@ -405,20 +421,26 @@ void Application::Start() {
                 protocol_->server_sample_rate(), codec->output_sample_rate());
         }
     });
-    protocol_->OnAudioChannelClosed([this, &board]() {
-        MyNVS nvs("wifi", NVS_READONLY);
-        bool sleep = false;
-        nvs.read("sleep_mode", sleep);
-        if (sleep) {
-            board.SetPowerSaveMode(true);
-        }
-        Schedule([this]() {
-            auto display = Board::GetInstance().GetDisplay();
-            display->SetChatMessage("system", "");
-            SetDeviceState(kDeviceStateIdle);
-        });
+    protocol_->OnAudioChannelClosed([this]() {
+        bg_.Schedule([](void* arg) {
+                MyNVS nvs("wifi", NVS_READONLY);
+                bool sleep = false;
+                nvs.read("sleep_mode", sleep);
+                if (sleep) {
+                    Board::GetInstance().SetPowerSaveMode(true);
+                }
+                auto display = Board::GetInstance().GetDisplay();
+                display->SetChatMessage("system", "");
+                ((Application*)arg)->SetDeviceState(kDeviceStateIdle);
+            }, 
+            "CloseAudio", 
+            this
+        );
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
+
+
+
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (strcmp(type->valuestring, "tts") == 0) {
@@ -555,11 +577,7 @@ void Application::MainEventLoop() {
     vTaskPrioritySet(NULL, 3);
 
     while (true) {
-        auto bits = xEventGroupWaitBits(event_group_, MAIN_EVENT_SCHEDULE |
-            MAIN_EVENT_SEND_AUDIO |
-            MAIN_EVENT_WAKE_WORD_DETECTED |
-            MAIN_EVENT_VAD_CHANGE |
-            MAIN_EVENT_ERROR, pdTRUE, pdFALSE, portMAX_DELAY);
+        auto bits = xEventGroupWaitBits(event_group_, MAIN_EVENT_SCHEDULE | MAIN_EVENT_SEND_AUDIO | MAIN_EVENT_ERROR, pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & MAIN_EVENT_ERROR) {
             SetDeviceState(kDeviceStateIdle);
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "sad", Lang::Sounds::OGG_EXCLAMATION);
@@ -663,25 +681,42 @@ void Application::Reboot() {
     esp_restart();
 }
 
+struct wake_invoke_t {
+    Application*        app;
+    std::string         wake_word;
+    wake_invoke_t(Application* a, std::string w) : app(a), wake_word(std::move(w)) {}
+};
 void Application::WakeWordInvoke(const std::string& wake_word) {
-    if (device_state_ == kDeviceStateIdle) {
-        ToggleChatState();
-        Schedule([this, wake_word]() {
-            if (protocol_) {
-                protocol_->SendWakeWordDetected(wake_word); 
+    auto* data = new wake_invoke_t(this, std::string(wake_word));
+    bg_.Schedule([](void* arg){
+            auto* data = (wake_invoke_t*)arg;
+            auto* app = data->app;
+            switch (app->device_state_) {
+              case kDeviceStateIdle:
+                app->ToggleChatState();
+                if (app->protocol_) {
+                    app->protocol_->SendWakeWordDetected(data->wake_word);
+                }
+                break;
+              case kDeviceStateSpeaking:
+                app->AbortSpeaking(kAbortReasonNone);
+                break;
+              case kDeviceStateListening:
+                if (app->protocol_) {
+                    app->protocol_->CloseAudioChannel();
+                }
+                break;
+              default:
+                ESP_LOGE(TAG, "Invalid state.");
+                return;
             }
-        }); 
-    } else if (device_state_ == kDeviceStateSpeaking) {
-        Schedule([this]() {
-            AbortSpeaking(kAbortReasonNone);
-        });
-    } else if (device_state_ == kDeviceStateListening) {   
-        Schedule([this]() {
-            if (protocol_) {
-                protocol_->CloseAudioChannel();
-            }
-        });
-    }
+        }, 
+        "wakeInvoke", 
+        data,
+        [](void *arg) {
+            delete (wake_invoke_t*)arg;
+        }
+    );
 }
 
 bool Application::CanEnterSleepMode() {
@@ -701,39 +736,56 @@ bool Application::CanEnterSleepMode() {
     return true;
 }
 
+struct mcp_task_t {
+    Application*        app;
+    std::string         payload;
+    mcp_task_t(Application* a, std::string p) : app(a), payload(std::move(p)) {}
+};
 void Application::SendMcpMessage(const std::string& payload) {
-    Schedule([this, payload]() {
-        if (protocol_) {
-            protocol_->SendMcpMessage(payload);
+    auto* data = new mcp_task_t(this, std::string(payload));
+    bg_.Schedule([](void* arg){
+            auto* data = (mcp_task_t*)arg;
+            auto* app = data->app;
+            if (app->protocol_) app->protocol_->SendMcpMessage(data->payload);
+        }, 
+        "SendMcp",
+        data,
+        [](void* arg){
+            delete (mcp_task_t*)arg;
         }
-    });
+    );
 }
 
 void Application::SetAecMode(AecMode mode) {
     aec_mode_ = mode;
-    Schedule([this]() {
-        auto& board = Board::GetInstance();
-        auto display = board.GetDisplay();
-        switch (aec_mode_) {
-        case kAecOff:
-            audio_service_.EnableDeviceAec(false);
-            display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
-            break;
-        case kAecOnServerSide:
-            audio_service_.EnableDeviceAec(false);
-            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-            break;
-        case kAecOnDeviceSide:
-            audio_service_.EnableDeviceAec(true);
-            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-            break;
-        }
+    bg_.Schedule([](void* arg){
+            auto& board = Board::GetInstance();
+            auto display = board.GetDisplay();
+            auto* app = (Application*)arg;
 
-        // If the AEC mode is changed, close the audio channel
-        if (protocol_ && protocol_->IsAudioChannelOpened()) {
-            protocol_->CloseAudioChannel();
-        }
-    });
+            switch (app->aec_mode_) {
+              case kAecOff:
+                app->audio_service_.EnableDeviceAec(false);
+                display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
+                break;
+              case kAecOnServerSide:
+                app->audio_service_.EnableDeviceAec(false);
+                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+                break;
+              case kAecOnDeviceSide:
+                app->audio_service_.EnableDeviceAec(true);
+                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+                break;
+            }
+
+            // If the AEC mode is changed, close the audio channel
+            if (app->protocol_ && app->protocol_->IsAudioChannelOpened()) {
+                app->protocol_->CloseAudioChannel();
+            }
+        }, 
+        "SetAec", 
+        this
+    );
 }
 
 void Application::PlaySound(const std::string_view& sound) {
@@ -746,7 +798,7 @@ void Application::HandleWakeWordDetected()
     if (protocol_) {
         switch (device_state_) 
         {
-            case kDeviceStateIdle:
+          case kDeviceStateIdle:
             audio_service_.EncodeWakeWord();
             if (!protocol_->IsAudioChannelOpened()) {
                 SetDeviceState(kDeviceStateConnecting);
@@ -759,13 +811,13 @@ void Application::HandleWakeWordDetected()
             SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
             break;
-            case kDeviceStateSpeaking:
+          case kDeviceStateSpeaking:
             AbortSpeaking(kAbortReasonWakeWordDetected);
             break;
-            case kDeviceStateActivating:
+          case kDeviceStateActivating:
             SetDeviceState(kDeviceStateIdle);
             break;
-            default:
+          default:
             ESP_LOGE(TAG, "Invalid device state when wake word detected.");
         }
     }
