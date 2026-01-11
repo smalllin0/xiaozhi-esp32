@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "ogg_demuxer.h"
+#include "../assets/lang_config.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "processors/afe_audio_processor.h"
@@ -355,7 +356,27 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     });
 }
 
+void AudioService::PlaySound() {
+    auto& bg = MyBackground::GetInstance();
+    bg.Schedule([](void* arg){
+        auto* self = (AudioService*)arg;
+        uint8_t buf[2048];
+        size_t read_offset = 0;
+        size_t total_size = Lang::Sounds::ogg_out_end - Lang::Sounds::ogg_out_start;
+        OggDemuxer demuxer;
 
+        while (read_offset < total_size) {
+            size_t chunk = std::min(total_size - read_offset, (size_t)2048);
+            memcpy(buf, Lang::Sounds::ogg_out_start + read_offset, chunk);
+            demuxer.Process(buf, chunk, [self](const uint8_t* data, size_t size, int sample_rate){
+                std::vector<uint8_t> opus_data(data, data + size);
+                // Use the actual sample_rate provided by the demuxer
+                self->DecodeAudio(std::move(opus_data), sample_rate, 60);
+            });
+            read_offset += chunk;
+        }
+     }, "playOgg", this);
+}
 
 
 /// @brief 音频服务是否空闲

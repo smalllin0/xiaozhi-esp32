@@ -544,6 +544,9 @@ void Application::Start() {
 
     // Print heap stats
     // SystemInfo::PrintHeapStats();
+
+    // 音频测试
+    audio_service_.PlaySound();
 }
 
 void Application::OnClockTimer() {
