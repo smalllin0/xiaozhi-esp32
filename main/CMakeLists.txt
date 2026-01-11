@@ -1,4 +1,5 @@
 set(SOURCES 
+            "audio/ogg_demuxer.cc"
             "audio/audio_service.cc"
             "audio/codecs/audio_codec.cc"
             "audio/codecs/es8311_audio_codec.cc"
