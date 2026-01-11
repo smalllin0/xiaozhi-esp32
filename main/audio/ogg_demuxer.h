@@ -26,7 +26,7 @@ private:
     struct {
         uint8_t header[27];             // Ogg页头
         uint8_t seg_table[255];         // 当前存储的段表
-        uint8_t packet_buf[4096];       // 4KB包缓冲区
+        uint8_t packet_buf[8192];       // 8KB包缓冲区
         size_t packet_len = 0;          // 缓冲区中累计的数据长度
         size_t seg_count = 0;           // 当前页段数
         size_t seg_index = 0;           // 当前处理的段索引
@@ -40,11 +40,6 @@ private:
     } ctx_;
     
     ParseState state_ = ParseState::FIND_PAGE;
-    
-    // 新增：处理部分页头（跨数据块的"OggS"）
-    uint8_t partial_header_[4];         // 保存部分页头数据
-    size_t partial_header_len_ = 0;     // 部分页头数据长度
-    
 public:
     OggDemuxer() {
         Reset();

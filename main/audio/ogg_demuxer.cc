@@ -11,10 +11,13 @@ void OggDemuxer::Reset()
     ctx_.seg_count = 0;
     ctx_.seg_index = 0;
     ctx_.data_offset = 0;
-    ctx_.bytes_needed = 0;
+    ctx_.bytes_needed = 4;          // 需要4字节"OggS"
+    ctx_.seg_remaining = 0;
+    ctx_.body_size = 0;
+    ctx_.body_offset = 0;
     ctx_.packet_continued = false;
     
-    // 修复：清空缓冲区数据
+    // 清空缓冲区数据
     memset(ctx_.header, 0, sizeof(ctx_.header));
     memset(ctx_.seg_table, 0, sizeof(ctx_.seg_table));
     memset(ctx_.packet_buf, 0, sizeof(ctx_.packet_buf));
@@ -32,79 +35,108 @@ void OggDemuxer::Reset()
 size_t OggDemuxer::Process(const uint8_t* data, size_t size,
                           std::function<void(const uint8_t*, size_t, int)> on_packet)
 {
-    // size_t processed = 0;
-    size_t start = 0;           // start是数据处理的位置
-    size_t size_left = size;
+    size_t processed = 0;  // 已处理的字节数
     
-    while (start < size) {
+    while (processed < size) {
         switch (state_) {
           case ParseState::FIND_PAGE: {
             // 寻找页头"OggS"
-            if (partial_header_len_) {
-                // 不完整匹配
-                if (size + partial_header_len_ >= 4) {
-                    auto need = 4 - partial_header_len_;
-                    start += need;
-                    memcpy(ctx_.header + partial_header_len_, data, need);
+            if (ctx_.bytes_needed < 4) {
+                // 处理不完整的"OggS"匹配（跨数据块）
+                size_t to_copy = std::min(size - processed, ctx_.bytes_needed);
+                memcpy(ctx_.header + (4 - ctx_.bytes_needed), data + processed, to_copy);
+                
+                processed += to_copy;
+                ctx_.bytes_needed -= to_copy;
+                
+                if (ctx_.bytes_needed == 0) {
+                    // 检查是否匹配"OggS"
                     if (memcmp(ctx_.header, "OggS", 4) == 0) {
-                        // 转入下一阶段
                         state_ = ParseState::PARSE_HEADER;
-                        ctx_.bytes_needed = 27 - 4;
-                        ctx_.body_offset = 4;
+                        ctx_.data_offset = 4;
+                        ctx_.bytes_needed = 27 - 4;  // 还需要23字节完成页头
+                    } else {
+                        // 匹配失败，滑动1字节继续匹配
+                        memmove(ctx_.header, ctx_.header + 1, 3);
+                        ctx_.bytes_needed = 1;
                     }
-                    partial_header_len_ = 0;    // 将不完整页头数据清0,进入下一轮匹配
-                    continue;
                 } else {
-                    // 保留不完整数据
-                    memcpy(ctx_.header + partial_header_len_, data, size);
-                    partial_header_len_ += size;
-                    return size;
+                    // 数据不足，等待更多数据
+                    return processed;
                 }
-            } else {
-                // 完整匹配
+            } else if (ctx_.bytes_needed == 4) {
+                // 在数据块中查找完整的"OggS"
                 bool found = false;
-                for (; start + 4 <= size; start++) {
-                    if (memcmp(data + start, "OggS", 4) == 0) {
+                size_t i = 0;
+                size_t remaining = size - processed;
+                
+                // 搜索"OggS"
+                for (; i + 4 <= remaining; i++) {
+                    if (memcmp(data + processed + i, "OggS", 4) == 0) {
                         found = true;
                         break;
                     }
                 }
-                if (found) {
-                    state_ = ParseState::PARSE_HEADER;
-                    ctx_.bytes_needed = 27 - 4;
-                    ctx_.data_offset = 4;
-                    continue;
-                } else {
-                    // 保留不完整的页头，有可能是
-                    partial_header_len_ = std::min(size, size - start);
-                    memcpy(ctx_.header, data + start, partial_header_len_);
-                    return size;  // 处理完所有数据
-                }
-                break;
-            }   
-          }
                 
+                if (found) {
+                    // 找到"OggS"，跳过已搜索的字节
+                    processed += i;
+                    
+                    // 不记录找到的"OggS"，无必要
+                    // memcpy(ctx_.header, data + processed, 4);
+                    processed += 4;
+                    
+                    state_ = ParseState::PARSE_HEADER;
+                    ctx_.data_offset = 4;
+                    ctx_.bytes_needed = 27 - 4;  // 还需要23字节
+                } else {
+                    // 没有找到完整"OggS"，保存可能的部分匹配
+                    size_t partial_len = remaining - i;
+                    if (partial_len > 0) {
+                        memcpy(ctx_.header, data + processed + i, partial_len);
+                        ctx_.bytes_needed = 4 - partial_len;
+                        processed += i + partial_len;
+                    } else {
+                        processed += i;  // 已搜索所有字节
+                    }
+                    return processed;  // 返回已处理的字节数
+                }
+            } else {
+                ESP_LOGE(TAG, "OggDemuxer run in error state: bytes_needed=%zu", ctx_.bytes_needed);
+                Reset();
+                return processed;
+            }
+            break;
+          }
+            
           case ParseState::PARSE_HEADER: {
-            // 修复：处理可能的部分页头
-            size_t available = size - start; 
+            size_t available = size - processed;
             
             if (available < ctx_.bytes_needed) {
-                // 复制可用的部分
-                memcpy(ctx_.header + ctx_.data_offset, data + start, available);
+                // 数据不足，复制可用的部分
+                memcpy(ctx_.header + ctx_.data_offset, 
+                        data + processed, available);
+                
                 ctx_.data_offset += available;
                 ctx_.bytes_needed -= available;
-                return size;  // 等待更多数据
+                processed += available;
+                return processed;  // 等待更多数据
             } else {
                 // 有足够的数据完成页头
-                memcpy(ctx_.header + ctx_.data_offset, data + start, ctx_.bytes_needed);
+                size_t to_copy = ctx_.bytes_needed;
+                memcpy(ctx_.header + ctx_.data_offset, 
+                        data + processed, to_copy);
                 
-                start += ctx_.bytes_needed;
-                ctx_.data_offset += ctx_.bytes_needed;
+                processed += to_copy;
+                ctx_.data_offset += to_copy;
+                ctx_.bytes_needed = 0;
                 
                 // 验证页头
-                if (ctx_.header[4] != 0) {  // 版本检查
+                if (ctx_.header[4] != 0) {
                     ESP_LOGE(TAG, "无效的Ogg版本: %d", ctx_.header[4]);
                     state_ = ParseState::FIND_PAGE;
+                    ctx_.bytes_needed = 4;
+                    ctx_.data_offset = 0;
                     break;
                 }
                 
@@ -116,49 +148,59 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
                 } else if (ctx_.seg_count == 0) {
                     // 没有段，直接跳到下一个页面
                     state_ = ParseState::FIND_PAGE;
+                    ctx_.bytes_needed = 4;
+                    ctx_.data_offset = 0;
                 } else {
                     ESP_LOGE(TAG, "无效的段数: %u", ctx_.seg_count);
                     state_ = ParseState::FIND_PAGE;
+                    ctx_.bytes_needed = 4;
+                    ctx_.data_offset = 0;
                 }
             }
             break;
-          }
-                
-          case ParseState::PARSE_SEGMENTS: {
-            size_t available = size - start;
+        }
             
-            // 如果需要的数据比可用的多
+          case ParseState::PARSE_SEGMENTS: {
+            size_t available = size - processed;
+            
             if (available < ctx_.bytes_needed) {
-                memcpy(ctx_.seg_table + ctx_.data_offset, data + start, available);
+                memcpy(ctx_.seg_table + ctx_.data_offset, 
+                        data + processed, available);
+                
                 ctx_.data_offset += available;
                 ctx_.bytes_needed -= available;
-                start += available;
-                return size;  // 等待更多数据
+                processed += available;
+                return processed;  // 等待更多数据
             } else {
-                memcpy(ctx_.seg_table + ctx_.data_offset, data + start, ctx_.bytes_needed);
+                size_t to_copy = ctx_.bytes_needed;
+                memcpy(ctx_.seg_table + ctx_.data_offset, 
+                        data + processed, to_copy);
                 
-                start += ctx_.bytes_needed;
-                ctx_.data_offset += ctx_.bytes_needed;
+                processed += to_copy;
+                ctx_.data_offset += to_copy;
+                ctx_.bytes_needed = 0;
                 
                 state_ = ParseState::PARSE_DATA;
                 ctx_.seg_index = 0;
                 ctx_.data_offset = 0;
+                
+                // 计算数据体总大小
                 ctx_.body_size = 0;
                 for (size_t i = 0; i < ctx_.seg_count; ++i) {
                     ctx_.body_size += ctx_.seg_table[i];
                 }
                 ctx_.body_offset = 0;
+                ctx_.seg_remaining = 0;
             }
             break;
-          }
-                
+        }
+            
           case ParseState::PARSE_DATA: {
-            while (ctx_.seg_index < ctx_.seg_count && start < size) {
+            while (ctx_.seg_index < ctx_.seg_count && processed < size) {
                 uint8_t seg_len = ctx_.seg_table[ctx_.seg_index];
                 
                 // 检查段数据是否已经部分读取
                 if (ctx_.seg_remaining > 0) {
-                    // 继续读取上次未完成的段
                     seg_len = ctx_.seg_remaining;
                 } else {
                     ctx_.seg_remaining = seg_len;
@@ -166,21 +208,22 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
                 
                 // 检查缓冲区是否足够
                 if (ctx_.packet_len + seg_len > sizeof(ctx_.packet_buf)) {
-                    // 缓冲区溢出，重置
                     ESP_LOGE(TAG, "包缓冲区溢出: %zu + %u > %zu",
                             ctx_.packet_len, seg_len, sizeof(ctx_.packet_buf));
                     state_ = ParseState::FIND_PAGE;
                     ctx_.packet_len = 0;
                     ctx_.packet_continued = false;
                     ctx_.seg_remaining = 0;
-                    return start;
+                    ctx_.bytes_needed = 4;
+                    return processed;
                 }
                 
                 // 复制数据
-                size_t to_copy = std::min(size - start, (size_t)seg_len);
-                memcpy(ctx_.packet_buf + ctx_.packet_len, data + start, to_copy);
+                size_t to_copy = std::min(size - processed, (size_t)seg_len);
+                memcpy(ctx_.packet_buf + ctx_.packet_len, 
+                        data + processed, to_copy);
                 
-                start += to_copy;
+                processed += to_copy;
                 ctx_.packet_len += to_copy;
                 ctx_.body_offset += to_copy;
                 ctx_.seg_remaining -= to_copy;
@@ -188,20 +231,23 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
                 // 检查段是否完整
                 if (ctx_.seg_remaining > 0) {
                     // 段不完整，等待更多数据
-                    return size;
+                    return processed;
                 }
                 
                 // 段完整
-                ctx_.packet_continued = (ctx_.seg_table[ctx_.seg_index] == 255);
+                bool seg_continued = (ctx_.seg_table[ctx_.seg_index] == 255);
                 
-                if(!ctx_.packet_continued) {
+                if (!seg_continued) {
                     // 包结束
                     if (ctx_.packet_len > 0) {
                         ProcessPacket(ctx_.packet_buf, ctx_.packet_len, on_packet);
                     }
                     ctx_.packet_len = 0;
                     ctx_.packet_continued = false;
+                } else {
+                    ctx_.packet_continued = true;
                 }
+                
                 ctx_.seg_index++;
                 ctx_.seg_remaining = 0;
             }
@@ -209,16 +255,26 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
             if (ctx_.seg_index == ctx_.seg_count) {
                 // 检查是否所有数据体都已读取
                 if (ctx_.body_offset < ctx_.body_size) {
-                    // 还有数据未读，但段表已处理完，这不应该发生
-                    ESP_LOGW(TAG, "数据体不完整: %zu/%zu", ctx_.body_offset, ctx_.body_size);
+                    ESP_LOGW(TAG, "数据体不完整: %zu/%zu", 
+                            ctx_.body_offset, ctx_.body_size);
                 }
-                    state_ = ParseState::FIND_PAGE;
+                
+                // 如果包跨页，保持packet_len和packet_continued
+                if (!ctx_.packet_continued) {
+                    ctx_.packet_len = 0;
+                }
+                
+                // 进入下一页面
+                state_ = ParseState::FIND_PAGE;
+                ctx_.bytes_needed = 4;
+                ctx_.data_offset = 0;
             }
             break;
         }
-      }
+        }
     }
-    return size;
+    
+    return processed;
 }
 
 /// @brief 处理数据包

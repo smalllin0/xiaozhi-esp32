@@ -5,6 +5,7 @@
 #include "my_background.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "ogg_demuxer.h"
 
 #if CONFIG_USE_AUDIO_PROCESSOR
 #include "processors/afe_audio_processor.h"
@@ -340,149 +341,23 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     auto& bg = MyBackground::GetInstance();
     bg.Schedule([](void* arg){
         auto* data = (play_sound_t*)arg;
+        auto* self = data->service;
         auto* buf = reinterpret_cast<const uint8_t*>(data->ogg.data());
         size_t size = data->ogg.size();
-        bool seen_head = false;
-        bool seen_tags = false;
-        int sample_rate = 16000;  // Opus默认采样率
-        
-        // 修复：用于累积跨页数据包的缓冲区
-        std::vector<uint8_t> partial_packet;
-        size_t offset = 0;
-        
-        while (offset + 27 <= size) {
-            // 1. 验证页头
-            if (memcmp(buf + offset, "OggS", 4) != 0) {
-                offset++;   // 尝试重新同步：寻找下一个"OggS"
-                continue;
-            }
-            
-            const uint8_t* page = buf + offset;
-            
-            // 2. 解析页头基本字段(仅段数)
-            uint8_t segment_count = page[26];
-            
-            // 3. 计算数据位置
-            size_t seg_table_offset = offset + 27;
-            size_t body_offset = seg_table_offset + segment_count;
-            
-            // 4. 计算数据体总大小
-            size_t body_size = 0;
-            for (uint8_t i = 0; i < segment_count; ++i) {
-                body_size += page[27 + i];
-            }
-            
-            // 5. 边界检查
-            if (seg_table_offset + segment_count > size || 
-                body_offset + body_size > size) {
-                ESP_LOGE(TAG, "Ogg文件数据不完整");
-                break;  // 数据不完整
-            }
-            
-            // 6. 处理每个段
-            size_t data_pos = 0;
-            for (uint8_t seg_idx = 0; seg_idx < segment_count; ++seg_idx) {
-                uint8_t seg_len = page[27 + seg_idx];
-                const uint8_t* seg_data = buf + body_offset + data_pos;
-                
-                // 修复：累积数据到partial_packet（处理跨页包）
-                partial_packet.insert(partial_packet.end(), seg_data, seg_data + seg_len);
-                data_pos += seg_len;
-                
-                // 修复：当段长度 < 255 时，表示一个完整的数据包结束
-                if (seg_len < 255 && !partial_packet.empty()) {
-                    const uint8_t* pkt_ptr = partial_packet.data();
-                    size_t pkt_len = partial_packet.size();
-                    
-                    // 处理数据包
-                    if (!seen_head) {
-                        if (pkt_len >= 8 && memcmp(pkt_ptr, "OpusHead", 8) == 0) {
-                            seen_head = true;
-                            if (pkt_len >= 19) {
-                                sample_rate = pkt_ptr[12] | (pkt_ptr[13] << 8) | (pkt_ptr[14] << 16) | (pkt_ptr[15] << 24);
-                            }
-                            // 清空缓冲区，准备下一个包
-                            partial_packet.clear();
-                            continue;
-                        }
-                    }
-                    
-                    if (!seen_tags) {
-                        if (pkt_len >= 8 && memcmp(pkt_ptr, "OpusTags", 8) == 0) {
-                            seen_tags = true;
-                            partial_packet.clear();
-                            continue;
-                        }
-                    }
-                    
-                    // 音频数据包
-                    if (seen_head && seen_tags) {
-                        auto* self = data->service;
-                        if (self && !partial_packet.empty()) {
-                            // 复制数据到新的vector传递给解码器
-                            std::vector<uint8_t> audio_packet = std::move(partial_packet);
-                            self->DecodeAudio(std::move(audio_packet), sample_rate, 60);
-                        }
-                    }
-                    
-                    // 清空partial_packet，准备下一个包
-                    partial_packet.clear();
-                }
-                // 如果 seg_len == 255，数据包继续，不处理，等待下一个段
-            }
-            
-            // 7. 移动到下一页
-            offset = body_offset + body_size;
-        }
-        
-        // 8. 处理最后可能剩余的部分包
-        if (!partial_packet.empty()) {
-            ESP_LOGW(TAG, "Ogg文件不完整");
-            // 这是一个不完整的包，可能是文件截断，可以选择丢弃
-        }
-        
+
+        OggDemuxer demuxer;
+        demuxer.Process(buf, size, [self](const uint8_t* data, size_t size, int sample_rate){
+            std::vector<uint8_t> opus_data(data, data + size);
+            self->DecodeAudio(std::move(opus_data), sample_rate, 60);
+        });
     }, "playOgg", data, [](void* arg){
         delete (play_sound_t*)arg;
     });
 }
 
-// void AudioService::PlaySound(const std::string_view& ogg) {
-//     auto* data = new play_sound_t(this, ogg);
-//     auto& bg = MyBackground::GetInstance();
-//     bg.Schedule([](void* arg){
-//         auto* data = (play_sound_t*)arg;
-//         auto* buf = reinterpret_cast<const uint8_t*>(data->ogg.data());
-//         auto* self = data->service;
-//         size_t size = data->ogg.size();
-//         size_t offset = 0;
-//         size_t size_left = size;
 
-//         // 页头缓存
-//         // 不完整的包缓存
-//         static std::vector<uint8_t> partial_page_header;    // 不完整的页头缓存
-//         static std::vector<uint8_t> partial_packet;         // 不完整的包缓存
-//         static size_t packet_len;                           // 包长度
 
-//         static int sample_rate = 16000;                 // 当前包的采样率
-//         static int frame_duration = 60;
-//         while (offset <= size) {
-//             auto partial_header_size = partial_page_header.size();
-//             if (partial_header_size) {
-//                 // 页头不完整
-//             } else {
-//                 // 页头是完整的
-//                 if (packet_len) {
-//                     // 存在不完整的包
-//                 } else {
-//                     // 不存在不完整的包
-//                 }
-//             } 
-//         }
 
-//     }, "playOgg", data, [](void* arg){
-//         delete (play_sound_t*)arg;
-//     });
-// }
 /// @brief 音频服务是否空闲
 /// @return 
 bool AudioService::IsIdle() {
