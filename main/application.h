@@ -40,10 +40,9 @@ public:
     Application& operator=(const Application&) = delete;
 
     void Start();
-    void MainEventLoop();
     DeviceState GetDeviceState() const { return device_state_; }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
-    void Schedule(std::function<void()> callback);
+    // void Schedule(std::function<void()> callback);
     void SetDeviceState(DeviceState state);
     void Alert(const char* status, const char* message, const char* emotion = "", const std::string_view& sound = "");
     void DismissAlert();
@@ -68,6 +67,7 @@ private:
     void HandleWakeWordDetected();
 
     MyBackground& 	bg_;
+    
 
 
 

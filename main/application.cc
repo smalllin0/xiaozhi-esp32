@@ -234,32 +234,28 @@ void Application::ToggleChatState() {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
-    bg_.Schedule([](void* arg){
-            auto* app = (Application*)arg;
-            switch (app->device_state_) {
+    bg_.Schedule([this](void* arg){
+            switch (device_state_) {
               case kDeviceStateIdle:
-                if (!app->protocol_->IsAudioChannelOpened()) {
-                    app->SetDeviceState(kDeviceStateConnecting);
-                    if (!app->protocol_->OpenAudioChannel()) {
+                if (!protocol_->IsAudioChannelOpened()) {
+                    SetDeviceState(kDeviceStateConnecting);
+                    if (!protocol_->OpenAudioChannel()) {
                         return;
                     }
                 }
-                app->SetListeningMode(app->aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
+                SetListeningMode(aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime);
                 break;
               case kDeviceStateSpeaking:
-                app->AbortSpeaking(kAbortReasonNone);
+                AbortSpeaking(kAbortReasonNone);
                 break;
               case kDeviceStateListening:
-                app->protocol_->CloseAudioChannel();
+                protocol_->CloseAudioChannel();
                 break;
               default:
                 ESP_LOGE(TAG, "Error state");
                 break;
             }
-        }, 
-        "ToggleChat", 
-        this
-    );
+        }, "ToggleChat");
 }
 
 void Application::StartListening() {
@@ -273,30 +269,26 @@ void Application::StartListening() {
         return;
     }
 
-    bg_.Schedule([](void* arg){
-            auto* app = (Application*)arg;
-            switch (app->device_state_) {
+    bg_.Schedule([this](void* arg){
+            switch (device_state_) {
               case kDeviceStateIdle:
-                if (!app->protocol_->IsAudioChannelOpened()) {
-                    app->SetDeviceState(kDeviceStateConnecting);
-                    if (!app->protocol_->OpenAudioChannel()) {
+                if (!protocol_->IsAudioChannelOpened()) {
+                    SetDeviceState(kDeviceStateConnecting);
+                    if (!protocol_->OpenAudioChannel()) {
                         return;
                     }
                 }
-                app->SetListeningMode(kListeningModeAutoStop);
+                SetListeningMode(kListeningModeAutoStop);
                 break;
               case kDeviceStateSpeaking:
-                app->AbortSpeaking(kAbortReasonNone);
-                app->SetListeningMode(kListeningModeManualStop);
+                AbortSpeaking(kAbortReasonNone);
+                SetListeningMode(kListeningModeManualStop);
                 break;
               default:
                 ESP_LOGE(TAG, "Error state");
                 break;
             }
-        }, 
-        "StartListen", 
-        this
-    );
+        }, "StartListen");
 }
 
 void Application::StopListening() {
@@ -312,14 +304,10 @@ void Application::StopListening() {
     }
 
     if (device_state_ == kDeviceStateListening) {
-        bg_.Schedule([](void* arg){
-                auto* app = (Application*)arg;
-                app->protocol_->SendStopListening();
-                app->SetDeviceState(kDeviceStateIdle);
-            }, 
-            "StopListen", 
-            this
-        );
+        bg_.Schedule([this](void* arg){
+                protocol_->SendStopListening();
+                SetDeviceState(kDeviceStateIdle);
+            }, "StopListen" );
     }
 }
 
@@ -387,9 +375,17 @@ void Application::Start() {
         protocol_ = std::make_unique<MqttProtocol>();
     }
 
+    audio_service_.SetSendFun([this](std::unique_ptr<AudioStreamPacket> packet) -> bool {
+        auto ret = protocol_->SendAudio(std::move(packet));
+        return ret;
+    });
+
     protocol_->OnNetworkError([this](const std::string& message) {
         last_error_message_ = message;
-        xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+        bg_.Schedule([this](void* arg){
+            SetDeviceState(kDeviceStateIdle);
+            Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "sad", Lang::Sounds::OGG_EXCLAMATION);
+        }, "error");
     });
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (device_state_ == kDeviceStateSpeaking) {
@@ -438,22 +434,21 @@ void Application::Start() {
         );
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
-
-
+       
 
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
-                Schedule([this]() {
+                bg_.Schedule([this](void* arg){
                     aborted_ = false;
                     if (device_state_ == kDeviceStateIdle || device_state_ == kDeviceStateListening) {
                         SetDeviceState(kDeviceStateSpeaking);
                     }
-                });
+                }, "speaking");
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
+                bg_.Schedule([this](void* arg) {
                     if (device_state_ == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -461,30 +456,30 @@ void Application::Start() {
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
-                });
+                }, "abort");
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
                     ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([this, display, message = std::string(text->valuestring)]() {
+                    bg_.Schedule([this, display, message = std::string(text->valuestring)](void* arg) {
                         display->SetChatMessage("assistant", message.c_str());
-                    });
+                    }, "chat_sys");
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
-                Schedule([this, display, message = std::string(text->valuestring)]() {
+                bg_.Schedule([this, display, message = std::string(text->valuestring)](void* arg) {
                     display->SetChatMessage("user", message.c_str());
-                });
+                }, "chat_user");
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
-                Schedule([this, display, emotion_str = std::string(emotion->valuestring)]() {
+                bg_.Schedule([this, display, emotion_str = std::string(emotion->valuestring)](void* arg) {
                     display->SetEmotion(emotion_str.c_str());
-                });
+                }, "emotion");
             }
         } else if (strcmp(type->valuestring, "mcp") == 0) {
             auto payload = cJSON_GetObjectItem(root, "payload");
@@ -497,9 +492,9 @@ void Application::Start() {
                 ESP_LOGI(TAG, "System command: %s", command->valuestring);
                 if (strcmp(command->valuestring, "reboot") == 0) {
                     // Do a reboot if user requests a OTA update
-                    Schedule([this]() {
+                    bg_.Schedule([this](void* arg) {
                         Reboot();
-                    });
+                    }, "reboot");
                 } else {
                     ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
                 }
@@ -518,9 +513,9 @@ void Application::Start() {
             auto payload = cJSON_GetObjectItem(root, "payload");
             ESP_LOGI(TAG, "Received custom message: %s", cJSON_PrintUnformatted(root));
             if (cJSON_IsObject(payload)) {
-                Schedule([this, display, payload_str = std::string(cJSON_PrintUnformatted(payload))]() {
+                bg_.Schedule([this, display, payload_str = std::string(cJSON_PrintUnformatted(payload))](void* arg) {
                     display->SetChatMessage("system", payload_str.c_str());
-                });
+                }, "chat_sys");
             } else {
                 ESP_LOGW(TAG, "Invalid custom message format: missing payload");
             }
@@ -546,7 +541,24 @@ void Application::Start() {
     // SystemInfo::PrintHeapStats();
 
     // 音频测试
-    audio_service_.PlaySound();
+    
+    McpServer::GetInstance().AddTool("self.audio_speaker.play_device_music",
+        "播放设备本地存储的音乐。"
+        "使用条件：仅当用户发出通用播放指令时使用（如'播放音乐'、'放首歌'、'来点音乐'）"
+        "行为规则："
+        "1. 调用此工具前，可以生成简短确认：'好的' 或 '马上播放'"
+        "2. 调用此工具后，必须立即停止生成任何语音或文本响应"
+        "3. 不要生成任何后续确认或说明，如'音乐开始播放啦'、'好好享受'等"
+        "4. 保持静默，等待用户下一次唤醒"
+        "禁止：当用户询问具体歌曲、查看歌单时，不要使用此工具",
+        PropertyList(),
+        [this](const PropertyList& properties) -> ReturnValue {
+            auto ret = bg_.Schedule([this](void* arg){
+                audio_service_.PlaySound();
+            }, "play_music");
+            return ret;
+        }
+    );
 }
 
 void Application::OnClockTimer() {
@@ -560,48 +572,6 @@ void Application::OnClockTimer() {
         // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
         // SystemInfo::PrintTaskList();
         // SystemInfo::PrintHeapStats();
-    }
-}
-
-// Add a async task to MainLoop
-void Application::Schedule(std::function<void()> callback) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        main_tasks_.push_back(std::move(callback));
-    }
-    xEventGroupSetBits(event_group_, MAIN_EVENT_SCHEDULE);
-}
-
-// The Main Event Loop controls the chat state and websocket connection
-// If other tasks need to access the websocket or chat state,
-// they should use Schedule to call this function
-void Application::MainEventLoop() {
-    // Raise the priority of the main event loop to avoid being interrupted by background tasks (which has priority 2)
-    vTaskPrioritySet(NULL, 3);
-
-    while (true) {
-        auto bits = xEventGroupWaitBits(event_group_, MAIN_EVENT_SCHEDULE | MAIN_EVENT_SEND_AUDIO | MAIN_EVENT_ERROR, pdTRUE, pdFALSE, portMAX_DELAY);
-        if (bits & MAIN_EVENT_ERROR) {
-            SetDeviceState(kDeviceStateIdle);
-            Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "sad", Lang::Sounds::OGG_EXCLAMATION);
-        }
-
-        if (bits & MAIN_EVENT_SEND_AUDIO) {
-            while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (!protocol_->SendAudio(std::move(packet))) {
-                    break;
-                }
-            }
-        }
-
-        if (bits & MAIN_EVENT_SCHEDULE) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            auto tasks = std::move(main_tasks_);
-            lock.unlock();
-            for (auto& task : tasks) {
-                task();
-            }
-        }
     }
 }
 
@@ -684,42 +654,29 @@ void Application::Reboot() {
     esp_restart();
 }
 
-struct wake_invoke_t {
-    Application*        app;
-    std::string         wake_word;
-    wake_invoke_t(Application* a, std::string w) : app(a), wake_word(std::move(w)) {}
-};
+
 void Application::WakeWordInvoke(const std::string& wake_word) {
-    auto* data = new wake_invoke_t(this, std::string(wake_word));
-    bg_.Schedule([](void* arg){
-            auto* data = (wake_invoke_t*)arg;
-            auto* app = data->app;
-            switch (app->device_state_) {
+    bg_.Schedule([this, &wake_word](void* arg){
+            switch (device_state_) {
               case kDeviceStateIdle:
-                app->ToggleChatState();
-                if (app->protocol_) {
-                    app->protocol_->SendWakeWordDetected(data->wake_word);
+                ToggleChatState();
+                if (protocol_) {
+                    protocol_->SendWakeWordDetected(wake_word);
                 }
                 break;
               case kDeviceStateSpeaking:
-                app->AbortSpeaking(kAbortReasonNone);
+                AbortSpeaking(kAbortReasonNone);
                 break;
               case kDeviceStateListening:
-                if (app->protocol_) {
-                    app->protocol_->CloseAudioChannel();
+                if (protocol_) {
+                    protocol_->CloseAudioChannel();
                 }
                 break;
               default:
                 ESP_LOGE(TAG, "Invalid state.");
                 return;
             }
-        }, 
-        "wakeInvoke", 
-        data,
-        [](void *arg) {
-            delete (wake_invoke_t*)arg;
-        }
-    );
+        }, "wakeInvoke");
 }
 
 bool Application::CanEnterSleepMode() {
@@ -739,56 +696,38 @@ bool Application::CanEnterSleepMode() {
     return true;
 }
 
-struct mcp_task_t {
-    Application*        app;
-    std::string         payload;
-    mcp_task_t(Application* a, std::string p) : app(a), payload(std::move(p)) {}
-};
 void Application::SendMcpMessage(const std::string& payload) {
-    auto* data = new mcp_task_t(this, std::string(payload));
-    bg_.Schedule([](void* arg){
-            auto* data = (mcp_task_t*)arg;
-            auto* app = data->app;
-            if (app->protocol_) app->protocol_->SendMcpMessage(data->payload);
+    bg_.Schedule([this, payload](void* arg){
+            if (protocol_) protocol_->SendMcpMessage(payload);
         }, 
-        "SendMcp",
-        data,
-        [](void* arg){
-            delete (mcp_task_t*)arg;
-        }
-    );
+        "SendMcp");
 }
 
 void Application::SetAecMode(AecMode mode) {
     aec_mode_ = mode;
-    bg_.Schedule([](void* arg){
-            auto& board = Board::GetInstance();
-            auto display = board.GetDisplay();
-            auto* app = (Application*)arg;
+    bg_.Schedule([this](void* arg){
+        auto display = Board::GetInstance().GetDisplay();
 
-            switch (app->aec_mode_) {
-              case kAecOff:
-                app->audio_service_.EnableDeviceAec(false);
-                display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
-                break;
-              case kAecOnServerSide:
-                app->audio_service_.EnableDeviceAec(false);
-                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-                break;
-              case kAecOnDeviceSide:
-                app->audio_service_.EnableDeviceAec(true);
-                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-                break;
-            }
+        switch (aec_mode_) {
+            case kAecOff:
+            audio_service_.EnableDeviceAec(false);
+            display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
+            break;
+            case kAecOnServerSide:
+            audio_service_.EnableDeviceAec(false);
+            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+            break;
+            case kAecOnDeviceSide:
+            audio_service_.EnableDeviceAec(true);
+            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+            break;
+        }
 
-            // If the AEC mode is changed, close the audio channel
-            if (app->protocol_ && app->protocol_->IsAudioChannelOpened()) {
-                app->protocol_->CloseAudioChannel();
-            }
-        }, 
-        "SetAec", 
-        this
-    );
+        // If the AEC mode is changed, close the audio channel
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+    }, "SetAec");
 }
 
 void Application::PlaySound(const std::string_view& sound) {
