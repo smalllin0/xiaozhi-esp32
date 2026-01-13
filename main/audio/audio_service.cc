@@ -29,27 +29,35 @@ struct output_t {
     std::vector<int16_t>    data;
 };
 
-
+// 周期性的启停止107us
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
     wake_word_timer_ = xTimerCreate(
         "wakeword",
-        pdMS_TO_TICKS(20),
+        pdMS_TO_TICKS(10),
         pdTRUE,
         this,
         [](TimerHandle_t id){
+            static bool on = true;
             auto* service = reinterpret_cast<AudioService*>(pvTimerGetTimerID(id));
-            xEventGroupSetBits(service->event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+            if (on) {
+                xEventGroupSetBits(service->event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+            }
+            on = !on;
         }
     );
     voice_process_timer_ = xTimerCreate(
         "voice_process",
-        pdMS_TO_TICKS(50),
+        pdMS_TO_TICKS(10),
         pdTRUE,
         this,
         [](TimerHandle_t id){
+            static bool on = true;
             auto* service = reinterpret_cast<AudioService*>(pvTimerGetTimerID(id));
-            xEventGroupSetBits(service->event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+            if (on) {
+                xEventGroupSetBits(service->event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+            }
+            on = !on;
         }
     );
 }
@@ -78,19 +86,9 @@ void AudioService::Initialize(AudioCodec* codec) {
     // 创建编码任务
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data){
         auto& bg = MyBackground::GetInstance();
-        auto* dat = new output_t;
-        dat->service = this;
-        dat->data = std::move(data);
-        bg.Schedule([](void* arg){
-                auto* self = ((output_t*)arg)->service;
-                self->EncodeAudio(std::move(((output_t*)arg)->data));
-            },
-            "Encode",
-            dat,
-            [](void* arg) {
-                delete (output_t*)arg;
-            }
-        );
+        bg.Schedule([this,  dat = std::move(data)](void* arg) mutable {
+            EncodeAudio(std::move(dat));
+        },"Encode");
     });
 
     audio_processor_->OnVadStateChange([this](bool speaking) {
@@ -200,7 +198,6 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
 void AudioService::AudioInputTask() {
     while (true) {
         EventBits_t bits = xEventGroupWaitBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING,
-            // pdFALSE, pdFALSE, portMAX_DELAY);
             pdTRUE, pdFALSE, portMAX_DELAY);
         if (service_stopped_) {
             break;
@@ -333,33 +330,23 @@ void AudioService::EnableDeviceAec(bool enable) {
 }
 
 /// @brief 播放Ogg格式的音频------------可以单独放在一个任务中，避免分成多个任务解码播放
-struct play_sound_t {
-    AudioService*           service;
-    const std::string_view& ogg;
-};
 void AudioService::PlaySound(const std::string_view& ogg) {
-    auto* data = new play_sound_t(this, ogg);
     auto& bg = MyBackground::GetInstance();
-    bg.Schedule([](void* arg){
-        auto* data = (play_sound_t*)arg;
-        auto* self = data->service;
-        auto* buf = reinterpret_cast<const uint8_t*>(data->ogg.data());
-        size_t size = data->ogg.size();
+    bg.Schedule([&ogg, this](void* arg){
+        auto* buf = reinterpret_cast<const uint8_t*>(ogg.data());
+        size_t size = ogg.size();
 
         OggDemuxer demuxer;
-        demuxer.Process(buf, size, [self](const uint8_t* data, size_t size, int sample_rate){
+        demuxer.Process(buf, size, [this](const uint8_t* data, size_t size, int sample_rate){
             std::vector<uint8_t> opus_data(data, data + size);
-            self->DecodeAudio(std::move(opus_data), sample_rate, 60);
+            DecodeAudio(std::move(opus_data), sample_rate, 60);
         });
-    }, "playOgg", data, [](void* arg){
-        delete (play_sound_t*)arg;
-    });
+    }, "playOgg");
 }
 
 void AudioService::PlaySound() {
     auto& bg = MyBackground::GetInstance();
-    bg.Schedule([](void* arg){
-        auto* self = (AudioService*)arg;
+    bg.Schedule([this](void* arg){
         uint8_t buf[2048];
         size_t read_offset = 0;
         size_t total_size = Lang::Sounds::ogg_out_end - Lang::Sounds::ogg_out_start;
@@ -368,14 +355,14 @@ void AudioService::PlaySound() {
         while (read_offset < total_size) {
             size_t chunk = std::min(total_size - read_offset, (size_t)2048);
             memcpy(buf, Lang::Sounds::ogg_out_start + read_offset, chunk);
-            demuxer.Process(buf, chunk, [self](const uint8_t* data, size_t size, int sample_rate){
+            demuxer.Process(buf, chunk, [this](const uint8_t* data, size_t size, int sample_rate){
                 std::vector<uint8_t> opus_data(data, data + size);
                 // Use the actual sample_rate provided by the demuxer
-                self->DecodeAudio(std::move(opus_data), sample_rate, 60);
+                DecodeAudio(std::move(opus_data), sample_rate, 60);
             });
             read_offset += chunk;
         }
-     }, "playOgg", this);
+     }, "playOgg");
 }
 
 
@@ -430,10 +417,10 @@ void AudioService::EncodeAudio(std::vector<int16_t>&& data)
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-        audio_send_queue_.push_back(std::move(packet));
+        // std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        // audio_send_queue_.push_back(std::move(packet));
         //应当要发送音频
-        if(send_fn_) send_fn_(packet);
+        if(send_fn_) send_fn_(std::move(packet));
     }
     if (callbacks_.on_send_queue_available) {
         callbacks_.on_send_queue_available();

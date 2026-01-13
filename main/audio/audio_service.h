@@ -74,7 +74,7 @@ struct decode_t {
     int             frame_duration;
     std::vector<uint8_t>    data;
 };
-typedef bool (*SendFun_t)(std::unique_ptr<AudioStreamPacket>& packet);
+using SendFun_t = std::function<bool(std::unique_ptr<AudioStreamPacket> packet)>;
 /*********** */
 
 class AudioService {
@@ -98,6 +98,10 @@ public:
     /// @brief 将唤醒词音频进行编码
     void EncodeWakeWord() {
         if (wake_word_) wake_word_->EncodeWakeWordData();
+    }
+
+    void SetSendFun(SendFun_t fun) {
+        send_fn_ = fun;
     }
 
 
