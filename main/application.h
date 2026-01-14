@@ -65,7 +65,6 @@ private:
 
     // 自己的实现
     void HandleWakeWordDetected();
-
     MyBackground& 	bg_;
     
 
@@ -73,7 +72,6 @@ private:
 
 
     std::mutex mutex_;
-    std::deque<std::function<void()>> main_tasks_;
     std::unique_ptr<Protocol> protocol_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
@@ -88,7 +86,6 @@ private:
     int clock_ticks_ = 0;
     TaskHandle_t check_new_version_task_handle_ = nullptr;
 
-    void OnWakeWordDetected();
     void CheckNewVersion(Ota& ota);
     void ShowActivationCode(const std::string& code, const std::string& message);
     void OnClockTimer();

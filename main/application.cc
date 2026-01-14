@@ -61,6 +61,8 @@ Application::~Application() {
     vEventGroupDelete(event_group_);
 }
 
+/// @brief 获取连接、检查有没有版本更新
+/// @param ota 
 void Application::CheckNewVersion(Ota& ota) {
     const int MAX_RETRY = 10;
     int retry_count = 0;
@@ -540,8 +542,7 @@ void Application::Start() {
     // Print heap stats
     // SystemInfo::PrintHeapStats();
 
-    // 音频测试
-    
+    // 本地音频测试    
     McpServer::GetInstance().AddTool("self.audio_speaker.play_device_music",
         "播放设备本地存储的音乐。"
         "使用条件：仅当用户发出通用播放指令时使用（如'播放音乐'、'放首歌'、'来点音乐'）"
@@ -574,7 +575,6 @@ void Application::OnClockTimer() {
         // SystemInfo::PrintHeapStats();
     }
 }
-
 
 void Application::AbortSpeaking(AbortReason reason) {
     ESP_LOGI(TAG, "Abort speaking");
@@ -649,11 +649,11 @@ void Application::SetDeviceState(DeviceState state) {
     }
 }
 
+/// @brief 重启设备
 void Application::Reboot() {
     ESP_LOGI(TAG, "Rebooting...");
     esp_restart();
 }
-
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
     bg_.Schedule([this, &wake_word](void* arg){
@@ -696,6 +696,7 @@ bool Application::CanEnterSleepMode() {
     return true;
 }
 
+/// @brief 发送MCP消息
 void Application::SendMcpMessage(const std::string& payload) {
     bg_.Schedule([this, payload](void* arg){
             if (protocol_) protocol_->SendMcpMessage(payload);
@@ -734,7 +735,7 @@ void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
 
-
+/// @brief 处理检测到唤醒词事件
 void Application::HandleWakeWordDetected()
 {
     if (protocol_) {
