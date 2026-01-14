@@ -24,11 +24,6 @@
 
 #define TAG "AudioService"
 
-struct output_t {
-    AudioService*           service;
-    std::vector<int16_t>    data;
-};
-
 // 周期性的启停止107us
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
@@ -38,12 +33,8 @@ AudioService::AudioService() {
         pdTRUE,
         this,
         [](TimerHandle_t id){
-            static bool on = true;
             auto* service = reinterpret_cast<AudioService*>(pvTimerGetTimerID(id));
-            if (on) {
-                xEventGroupSetBits(service->event_group_, AS_EVENT_WAKE_WORD_RUNNING);
-            }
-            on = !on;
+            xEventGroupSetBits(service->event_group_, AS_EVENT_WAKE_WORD_RUNNING);
         }
     );
     voice_process_timer_ = xTimerCreate(
@@ -52,12 +43,8 @@ AudioService::AudioService() {
         pdTRUE,
         this,
         [](TimerHandle_t id){
-            static bool on = true;
             auto* service = reinterpret_cast<AudioService*>(pvTimerGetTimerID(id));
-            if (on) {
-                xEventGroupSetBits(service->event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
-            }
-            on = !on;
+            xEventGroupSetBits(service->event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
         }
     );
 }
@@ -309,11 +296,9 @@ void AudioService::EnableVoiceProcessing(bool enable) {
         ResetDecoder();
         audio_input_need_warmup_ = true;
         audio_processor_->Start();
-        // xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
         xTimerStart(voice_process_timer_, 0);
     } else {
         audio_processor_->Stop();
-        // xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
         xTimerStop(voice_process_timer_, 0);
     }
 }
@@ -369,8 +354,6 @@ void AudioService::PlaySound() {
 /// @brief 音频服务是否空闲
 /// @return 
 bool AudioService::IsIdle() {
-    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    // return audio_encode_queue_.empty() && audio_decode_queue_.empty() && audio_playback_queue_.empty();
     return true;
 }
 
@@ -416,11 +399,9 @@ void AudioService::EncodeAudio(std::vector<int16_t>&& data)
         ESP_LOGE(TAG, "Failed to encode audio");
         return;
     }
-    {
-        // std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-        // audio_send_queue_.push_back(std::move(packet));
-        //应当要发送音频
-        if(send_fn_) send_fn_(std::move(packet));
+    //应当要发送音频
+    if (send_fn_) {
+        send_fn_(std::move(packet));
     }
     if (callbacks_.on_send_queue_available) {
         callbacks_.on_send_queue_available();
