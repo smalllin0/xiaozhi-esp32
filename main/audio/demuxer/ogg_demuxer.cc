@@ -21,19 +21,13 @@ void OggDemuxer::Reset()
     memset(ctx_.header, 0, sizeof(ctx_.header));
     memset(ctx_.seg_table, 0, sizeof(ctx_.seg_table));
     memset(ctx_.packet_buf, 0, sizeof(ctx_.packet_buf));
-    
-    stream_.head_seen = false;
-    stream_.tags_seen = false;
-    stream_.sample_rate = 48000;
 }
 
 /// @brief 处理数据块
 /// @param data 输入数据
 /// @param size 输入数据大小
-/// @param on_packet 数据包回调
 /// @return 已处理的字节数
-size_t OggDemuxer::Process(const uint8_t* data, size_t size,
-                          std::function<void(const uint8_t*, size_t, int)> on_packet)
+size_t OggDemuxer::Process(const uint8_t* data, size_t size)
 {
     size_t processed = 0;  // 已处理的字节数
     
@@ -239,8 +233,8 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
                 
                 if (!seg_continued) {
                     // 包结束
-                    if (ctx_.packet_len > 0) {
-                        ProcessPacket(ctx_.packet_buf, ctx_.packet_len, on_packet);
+                    if (ctx_.packet_len && on_demuxer_finished_) {
+                        on_demuxer_finished_(ctx_.packet_buf, ctx_.packet_len);
                     }
                     ctx_.packet_len = 0;
                     ctx_.packet_continued = false;
@@ -277,32 +271,3 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size,
     return processed;
 }
 
-/// @brief 处理数据包
-/// @param data 包数据
-/// @param size 包大小
-/// @param on_packet 数据包处理回调
-void OggDemuxer::ProcessPacket(const uint8_t* data, size_t size, std::function<void(const uint8_t*, size_t, int)> on_packet)
-{
-    if (!stream_.head_seen) {
-        if (size >= 8 && memcmp(data, "OpusHead", 8) == 0) {
-            stream_.head_seen = true;
-            if (size >= 19) {
-                stream_.sample_rate = data[12] | (data[13] << 8) | (data[14] << 16) | (data[15] << 24);
-                ESP_LOGI(TAG, "OpusHead: 采样率=%d", stream_.sample_rate);
-            }
-            return;
-        }
-    }
-    
-    if (!stream_.tags_seen) {
-        if (size >= 8 && memcmp(data, "OpusTags", 8) == 0) {
-            stream_.tags_seen = true;
-            ESP_LOGI(TAG, "OpusTags found");
-            return;
-        }
-    }
-    
-    if (stream_.head_seen && stream_.tags_seen && on_packet) {
-        on_packet(data, size, stream_.sample_rate);
-    }
-}

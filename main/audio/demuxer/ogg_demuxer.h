@@ -15,15 +15,10 @@ private:
         PARSE_DATA
     };
 
-    // 流信息
-    struct {
-        int sample_rate = 48000;
-        bool head_seen = false;
-        bool tags_seen = false;
-    } stream_;
 
     // 使用固定大小的缓冲区避免动态分配
-    struct {
+    struct context_t {
+        bool packet_continued{false};   // 当前包是否跨多个段
         uint8_t header[27];             // Ogg页头
         uint8_t seg_table[255];         // 当前存储的段表
         uint8_t packet_buf[8192];       // 8KB包缓冲区
@@ -35,11 +30,8 @@ private:
         size_t seg_remaining = 0;       // 当前段剩余需要读取的字节数
         size_t body_size = 0;           // 数据体总大小
         size_t body_offset = 0;         // 数据体已读取的字节数
-        
-        bool packet_continued = false;  // 当前包是否跨多个段
-    } ctx_;
+    };
     
-    ParseState state_ = ParseState::FIND_PAGE;
 public:
     OggDemuxer() {
         Reset();
@@ -47,13 +39,18 @@ public:
     
     void Reset();
     
-    // 处理数据块，返回已处理的字节数
-    size_t Process(const uint8_t* data, size_t size,
-                  std::function<void(const uint8_t*, size_t, int)> on_packet);
-    
+    size_t Process(const uint8_t* data, size_t size);
+
+    /// @brief 设置解封装完毕后回调处理函数
+    /// @param on_demuxer_finished 
+    void OnDemuxerFinished(std::function<void(const uint8_t* data, size_t len)> on_demuxer_finished) {
+        on_demuxer_finished_ = on_demuxer_finished;
+    }
 private:
-    void ProcessPacket(const uint8_t* data, size_t size,
-                      std::function<void(const uint8_t*, size_t, int)> on_packet);
+
+    ParseState  state_ = ParseState::FIND_PAGE;
+    context_t   ctx_;
+    std::function<void(const uint8_t*, size_t)> on_demuxer_finished_;
 };
 
 #endif

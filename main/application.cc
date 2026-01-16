@@ -391,25 +391,9 @@ void Application::Start() {
     });
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (device_state_ == kDeviceStateSpeaking) {
-            // audio_service_.PushPacketToDecodeQueue(std::move(packet));
-            // 生成后台解码
-            auto* decode = new decode_t;
-            decode->sample_rate = packet->sample_rate;
-            decode->service = &audio_service_;
-            decode->data = std::move(packet->payload);
-            decode->frame_duration = packet->frame_duration;
-            bg_.Schedule([](void* arg){
-                    auto* decode_data = (decode_t*)arg;
-                    auto* service = decode_data->service;
-                    auto& data = decode_data->data;
-                    service->DecodeAudio(std::move(data), decode_data->sample_rate, decode_data->frame_duration);
-                }, 
-                "Decode", 
-                decode, 
-                [](void*arg){
-                    delete (decode_t*)arg;
-                }
-            );
+            bg_.Schedule([this, &packet](void* arg){
+                audio_service_.DecodeAudio(packet->payload, packet->sample_rate, packet->frame_duration);
+            }, "Decode");
         }
     });
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
@@ -545,12 +529,11 @@ void Application::Start() {
     // 本地音频测试    
     McpServer::GetInstance().AddTool("self.audio_speaker.play_device_music",
         "播放设备本地存储的音乐。"
-        "使用条件：仅当用户发出通用播放指令时使用（如'播放音乐'、'放首歌'、'来点音乐'）"
+        "使用条件：仅当用户发出播放本地音乐指令时使用"
         "行为规则："
-        "1. 调用此工具前，可以生成简短确认：'好的' 或 '马上播放'"
-        "2. 调用此工具后，必须立即停止生成任何语音或文本响应"
-        "3. 不要生成任何后续确认或说明，如'音乐开始播放啦'、'好好享受'等"
-        "4. 保持静默，等待用户下一次唤醒"
+        "1. 调用此工具后，必须立即停止生成任何语音或文本响应"
+        "2. 不要生成任何后续确认或说明，如'音乐开始播放啦'、'好好享受'等"
+        "3. 保持静默，等待用户下一次唤醒"
         "禁止：当用户询问具体歌曲、查看歌单时，不要使用此工具",
         PropertyList(),
         [this](const PropertyList& properties) -> ReturnValue {

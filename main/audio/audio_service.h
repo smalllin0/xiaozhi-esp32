@@ -20,6 +20,7 @@
 #include "audio_processor.h"
 #include "wake_word.h"
 #include "protocol.h"
+#include "ogg_demuxer.h"
 
 
 /*
@@ -67,15 +68,13 @@ struct AudioTask {
 };
 
 /***************** */
-class AudioService;
-struct decode_t {
-    AudioService*   service;
-    int             sample_rate;
-    int             frame_duration;
-    std::vector<uint8_t>    data;
-};
 using SendFun_t = std::function<bool(std::unique_ptr<AudioStreamPacket> packet)>;
-/*********** */
+struct Opus_t {
+    bool head_seen{false};
+    bool tags_seen{false};
+    int sample_rate = 48000;
+};
+/************/
 
 class AudioService {
 public:
@@ -86,6 +85,16 @@ public:
         }
     }
     void DecodeAudio(std::vector<uint8_t> data, int sample_rate, int frame_duration);   // 后续要放到private中
+    void ResetOpusParser() {
+        opus_info_ = {
+            .head_seen = false,
+            .tags_seen = false,
+            .sample_rate = 48000
+        };
+    }
+
+
+
     
     /// @brief 设置服务所需的回调函数
     void SetCallbacks(AudioServiceCallbacks& callbacks) {
@@ -136,7 +145,8 @@ private:
     TimerHandle_t               voice_process_timer_{nullptr};  // 音频处理定时器
     SendFun_t                   send_fn_{nullptr};              // 发送回调
     std::unique_ptr<WakeWord>   wake_word_;                     // 唤醒词句柄
-
+    OggDemuxer                  demuxer_;
+    Opus_t                      opus_info_;
 
 
 

@@ -26,6 +26,30 @@
 
 // 周期性的启停止107us
 AudioService::AudioService() {
+    demuxer_.OnDemuxerFinished([this](const uint8_t* data, size_t size) {
+        if (!opus_info_.head_seen) {
+            if (size >=8 && memcmp(data, "OpusHead", 8) == 0) {
+                opus_info_.head_seen = true;
+                if (size >= 19) {
+                    opus_info_.sample_rate = data[12] | (data[13] << 8) | (data[14] << 16) | (data[15] << 24);
+                    ESP_LOGI(TAG, "OpusHead found, sample_rate=%d", opus_info_.sample_rate);
+                }
+                return;
+            }
+        }
+
+        if (!opus_info_.tags_seen) {
+            if (size >= 8 && memcmp(data, "OpusTags", 8) == 0) {
+                opus_info_.tags_seen = true;
+                ESP_LOGI(TAG, "OpusTags found.");
+                return;
+            }
+        }
+
+        std::vector<uint8_t> opus_data(data, data + size);
+        DecodeAudio(std::move(opus_data), opus_info_.sample_rate, 60);
+    });
+
     event_group_ = xEventGroupCreate();
     wake_word_timer_ = xTimerCreate(
         "wakeword",
@@ -314,18 +338,14 @@ void AudioService::EnableDeviceAec(bool enable) {
     audio_processor_->EnableDeviceAec(enable);
 }
 
-/// @brief 播放Ogg格式的音频------------可以单独放在一个任务中，避免分成多个任务解码播放
+/// @brief 播放Ogg格式的音频
 void AudioService::PlaySound(const std::string_view& ogg) {
     auto& bg = MyBackground::GetInstance();
     bg.Schedule([&ogg, this](void* arg){
         auto* buf = reinterpret_cast<const uint8_t*>(ogg.data());
         size_t size = ogg.size();
-
-        OggDemuxer demuxer;
-        demuxer.Process(buf, size, [this](const uint8_t* data, size_t size, int sample_rate){
-            std::vector<uint8_t> opus_data(data, data + size);
-            DecodeAudio(std::move(opus_data), sample_rate, 60);
-        });
+        ResetOpusParser();
+        demuxer_.Process(buf, size);
     }, "playOgg");
 }
 
@@ -335,16 +355,12 @@ void AudioService::PlaySound() {
         uint8_t buf[2048];
         size_t read_offset = 0;
         size_t total_size = Lang::Sounds::ogg_out_end - Lang::Sounds::ogg_out_start;
-        OggDemuxer demuxer;
 
+        ResetOpusParser();
         while (read_offset < total_size) {
             size_t chunk = std::min(total_size - read_offset, (size_t)2048);
             memcpy(buf, Lang::Sounds::ogg_out_start + read_offset, chunk);
-            demuxer.Process(buf, chunk, [this](const uint8_t* data, size_t size, int sample_rate){
-                std::vector<uint8_t> opus_data(data, data + size);
-                // Use the actual sample_rate provided by the demuxer
-                DecodeAudio(std::move(opus_data), sample_rate, 60);
-            });
+            demuxer_.Process(buf, chunk);
             read_offset += chunk;
         }
      }, "playOgg");
@@ -408,27 +424,29 @@ void AudioService::EncodeAudio(std::vector<int16_t>&& data)
     }
 }
 
-/// @brief 音频数据解码
+/// @brief 音频数据解码、播放
 void AudioService::DecodeAudio(std::vector<uint8_t> data, int sample_rate, int frame_duration)
 {
-    auto task = std::make_unique<AudioTask>();
-    task->type = kAudioTaskTypeDecodeToPlaybackQueue;
-    task->timestamp = 0;
+    // auto task = std::make_unique<AudioTask>();
+    // task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+    // task->timestamp = 0;
+    std::vector<int16_t> pcm;
     SetDecodeSampleRate(sample_rate, frame_duration);
-    if (opus_decoder_->Decode(std::move(data), task->pcm)) {
+    if (opus_decoder_->Decode(std::move(data), pcm)) {
         if (opus_decoder_->sample_rate() != codec_->output_sample_rate()) {
             // 重采样
-            auto target_size = output_resampler_.GetOutputSamples(task->pcm.size());
+            auto input_samples = pcm.size();
+            auto target_size = output_resampler_.GetOutputSamples(input_samples);
             std::vector<int16_t> resampled(target_size);
-            output_resampler_.Process(task->pcm.data(), task->pcm.size(), resampled.data());
-            task->pcm = std::move(resampled);
+            output_resampler_.Process(pcm.data(), input_samples, resampled.data());
+            pcm = std::move(resampled);
         }
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
             codec_->EnableOutput(true);
         }
-        codec_->OutputData(task->pcm);
+        codec_->OutputData(pcm);
         last_output_time_ = std::chrono::steady_clock::now();
         #if CONFIG_USE_SERVER_AEC
             /* Record the timestamp for server AEC */
