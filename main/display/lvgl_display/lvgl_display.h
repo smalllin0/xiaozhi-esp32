@@ -26,18 +26,18 @@ public:
     virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80);
 
 protected:
-    esp_pm_lock_handle_t pm_lock_ = nullptr;
-    lv_display_t *display_ = nullptr;
+    esp_pm_lock_handle_t pm_lock_ = nullptr;    // 电源管理锁句柄
+    lv_display_t *display_ = nullptr;           // LVGL显示设备对象
 
-    lv_obj_t *network_label_ = nullptr;
-    lv_obj_t *status_label_ = nullptr;
-    lv_obj_t *notification_label_ = nullptr;
-    lv_obj_t *mute_label_ = nullptr;
-    lv_obj_t *battery_label_ = nullptr;
-    lv_obj_t* low_battery_popup_ = nullptr;
-    lv_obj_t* low_battery_label_ = nullptr;
+    lv_obj_t *network_label_ = nullptr;         // 网络图标
+    lv_obj_t *status_label_ = nullptr;          // 主状态文本
+    lv_obj_t *notification_label_ = nullptr;    // 临时通知文本
+    lv_obj_t *mute_label_ = nullptr;            // 静音状态图标
+    lv_obj_t *battery_label_ = nullptr;         // 电池电量图标
+    lv_obj_t* low_battery_popup_ = nullptr;     // 
+    lv_obj_t* low_battery_label_ = nullptr;     // 
     
-    const char* battery_icon_ = nullptr;
+    const char* battery_icon_ = nullptr;    
     const char* network_icon_ = nullptr;
     bool muted_ = false;
 

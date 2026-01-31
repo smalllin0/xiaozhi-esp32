@@ -796,119 +796,126 @@ void LcdDisplay::ClearChatMessages() {
 #else
 void LcdDisplay::SetupUI() {
     DisplayLockGuard lock(this);
+
+    // 从抽象主题接口中获取LVGL专用字体、图标资源
     LvglTheme* lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-    auto text_font = lvgl_theme->text_font()->font();
-    auto icon_font = lvgl_theme->icon_font()->font();
-    auto large_icon_font = lvgl_theme->large_icon_font()->font();
+    auto text_font = lvgl_theme->text_font()->font();               // 正文字体
+    auto icon_font = lvgl_theme->icon_font()->font();               // 状态栏小图标字体
+    auto large_icon_font = lvgl_theme->large_icon_font()->font();   // 居中表情字体
 
-    auto screen = lv_screen_active();
-    lv_obj_set_style_text_font(screen, text_font, 0);
-    lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
-    lv_obj_set_style_bg_color(screen, lvgl_theme->background_color(), 0);
+    // 为当前活动屏幕设置统一视觉规范
+    auto screen = lv_screen_active();                                       // 
+    lv_obj_set_style_text_font(screen, text_font, 0);                       // 设置默认字体
+    lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);       // 设置文本默认颜色
+    lv_obj_set_style_bg_color(screen, lvgl_theme->background_color(), 0);   // 屏幕背景色
 
+    // 背景容器
     /* Container - used as background */
-    container_ = lv_obj_create(screen);
-    lv_obj_set_size(container_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_radius(container_, 0, 0);
-    lv_obj_set_style_pad_all(container_, 0, 0);
-    lv_obj_set_style_border_width(container_, 0, 0);
-    lv_obj_set_style_bg_color(container_, lvgl_theme->background_color(), 0);
-    lv_obj_set_style_border_color(container_, lvgl_theme->border_color(), 0);
+    container_ = lv_obj_create(screen);                                         // 创建背景容器
+    lv_obj_set_size(container_, LV_HOR_RES, LV_VER_RES);                        // 设置容器大小
+    lv_obj_set_style_radius(container_, 0, 0);                                  // 设置强制直角，确保与屏幕边缘贴合
+    lv_obj_set_style_pad_all(container_, 0, 0);                                 // 清0内边距
+    lv_obj_set_style_border_width(container_, 0, 0);                            // 移除边框
+    lv_obj_set_style_bg_color(container_, lvgl_theme->background_color(), 0);   // 设置背景主题色
+    lv_obj_set_style_border_color(container_, lvgl_theme->border_color(), 0);   // 设置边框颜色
 
+    // 表情容器
     /* Bottom layer: emoji_box_ - centered display */
-    emoji_box_ = lv_obj_create(screen);
-    lv_obj_set_size(emoji_box_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_all(emoji_box_, 0, 0);
-    lv_obj_set_style_border_width(emoji_box_, 0, 0);
-    lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);
+    emoji_box_ = lv_obj_create(screen);                             // 创建表情容器
+    lv_obj_set_size(emoji_box_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);  // 尺寸由内部内容决定
+    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);          // 容器设置为透明背景
+    lv_obj_set_style_pad_all(emoji_box_, 0, 0);                     // 设置内边距为0
+    lv_obj_set_style_border_width(emoji_box_, 0, 0);                // 设置边框为0
+    lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);                // 设置屏幕居中
 
-    emoji_label_ = lv_label_create(emoji_box_);
-    lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
-    lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
-    lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);
+    emoji_label_ = lv_label_create(emoji_box_);                             // 创建静态表情容器
+    lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);           // 设置字体
+    lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0); // 设置字体颜色
+    lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);             // 显示AI芯片图标
 
-    emoji_image_ = lv_img_create(emoji_box_);
-    lv_obj_center(emoji_image_);
-    lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+    emoji_image_ = lv_img_create(emoji_box_);               // 在静态表情容器上创建图像对象
+    lv_obj_center(emoji_image_);                            // 设置居中对齐
+    lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);      // 设置为隐藏状态
 
+
+    // 预览容器
     /* Middle layer: preview_image_ - centered display */
-    preview_image_ = lv_image_create(screen);
-    lv_obj_set_size(preview_image_, width_ / 2, height_ / 2);
-    lv_obj_align(preview_image_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    preview_image_ = lv_image_create(screen);                   // 创建预览容器
+    lv_obj_set_size(preview_image_, width_ / 2, height_ / 2);   // 设置容器相对大小
+    lv_obj_align(preview_image_, LV_ALIGN_CENTER, 0, 0);        // 设置为居中对齐
+    lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);        // 设置为隐藏状态
 
     /* Layer 1: Top bar - for status icons */
-    top_bar_ = lv_obj_create(screen);
-    lv_obj_set_size(top_bar_, LV_HOR_RES, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(top_bar_, 0, 0);
-    lv_obj_set_style_bg_opa(top_bar_, LV_OPA_50, 0);  // 50% opacity background
-    lv_obj_set_style_bg_color(top_bar_, lvgl_theme->background_color(), 0);
-    lv_obj_set_style_border_width(top_bar_, 0, 0);
-    lv_obj_set_style_pad_all(top_bar_, 0, 0);
-    lv_obj_set_style_pad_top(top_bar_, lvgl_theme->spacing(2), 0);
-    lv_obj_set_style_pad_bottom(top_bar_, lvgl_theme->spacing(2), 0);
-    lv_obj_set_style_pad_left(top_bar_, lvgl_theme->spacing(4), 0);
-    lv_obj_set_style_pad_right(top_bar_, lvgl_theme->spacing(4), 0);
-    lv_obj_set_flex_flow(top_bar_, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(top_bar_, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_scrollbar_mode(top_bar_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, 0);
+    top_bar_ = lv_obj_create(screen);                                           // 创建顶部状态栏容器
+    lv_obj_set_size(top_bar_, LV_HOR_RES, LV_SIZE_CONTENT);                     // 设置屏容器宽度（全屏）、高度（自适应）
+    lv_obj_set_style_radius(top_bar_, 0, 0);                                    // 设置容器为直角（消除像素缝隙）
+    lv_obj_set_style_bg_opa(top_bar_, LV_OPA_50, 0);  // 50% opacity background // 设置为半透明
+    lv_obj_set_style_bg_color(top_bar_, lvgl_theme->background_color(), 0);     // 设置背景色
+    lv_obj_set_style_border_width(top_bar_, 0, 0);                              // 设置边框宽度
+    lv_obj_set_style_pad_all(top_bar_, 0, 0);                                   // 设置内填充（边距）宽度
+    lv_obj_set_style_pad_top(top_bar_, lvgl_theme->spacing(2), 0);              // 主题化间距
+    lv_obj_set_style_pad_bottom(top_bar_, lvgl_theme->spacing(2), 0);           // 
+    lv_obj_set_style_pad_left(top_bar_, lvgl_theme->spacing(4), 0);             // 
+    lv_obj_set_style_pad_right(top_bar_, lvgl_theme->spacing(4), 0);            // 
+    lv_obj_set_flex_flow(top_bar_, LV_FLEX_FLOW_ROW);                           // 顶部状态栏使用水平流布局（子元素从左到右依次排序）
+    lv_obj_set_flex_align(top_bar_, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); // 设置flex布局：主轴对齐、交叉轴对齐、子项自身对齐
+    lv_obj_set_scrollbar_mode(top_bar_, LV_SCROLLBAR_MODE_OFF);                 // 关闭滚动条显示（内容超出时不显示滚动条）
+    lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, 0);                             // 设置top_bar_相对父对象顶部居中，x/y方向偏移0像素
 
     // Left icon
-    network_label_ = lv_label_create(top_bar_);
-    lv_label_set_text(network_label_, "");
-    lv_obj_set_style_text_font(network_label_, icon_font, 0);
-    lv_obj_set_style_text_color(network_label_, lvgl_theme->text_color(), 0);
+    network_label_ = lv_label_create(top_bar_);                                 // 创建网络图标标签
+    lv_label_set_text(network_label_, "");                                      // 初始为化空标签
+    lv_obj_set_style_text_font(network_label_, icon_font, 0);                   // 设置标签字体
+    lv_obj_set_style_text_color(network_label_, lvgl_theme->text_color(), 0);   // 设置标签文本颜色为主题中色彩
 
     // Right icons container
-    lv_obj_t* right_icons = lv_obj_create(top_bar_);
-    lv_obj_set_size(right_icons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(right_icons, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(right_icons, 0, 0);
-    lv_obj_set_style_pad_all(right_icons, 0, 0);
-    lv_obj_set_flex_flow(right_icons, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(right_icons, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* right_icons = lv_obj_create(top_bar_);                                // 创建状态栏右侧图标对象
+    lv_obj_set_size(right_icons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);                 // 设置对象大小为内容大小
+    lv_obj_set_style_bg_opa(right_icons, LV_OPA_TRANSP, 0);                         // 设置背景为完全透明
+    lv_obj_set_style_border_width(right_icons, 0, 0);                               // 设置边框宽度为0
+    lv_obj_set_style_pad_all(right_icons, 0, 0);                                    // 设置内边距为0
+    lv_obj_set_flex_flow(right_icons, LV_FLEX_FLOW_ROW);                            // 设置flex布局为水平
+    lv_obj_set_flex_align(right_icons, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);  // 设置Flex对齐方式：主轴末尾对齐、交叉轴居中对齐
 
-    mute_label_ = lv_label_create(right_icons);
-    lv_label_set_text(mute_label_, "");
-    lv_obj_set_style_text_font(mute_label_, icon_font, 0);
-    lv_obj_set_style_text_color(mute_label_, lvgl_theme->text_color(), 0);
+    mute_label_ = lv_label_create(right_icons);                                 // 创建静音标签
+    lv_label_set_text(mute_label_, "");                                         // 设置标签字体为空
+    lv_obj_set_style_text_font(mute_label_, icon_font, 0);                      // 设置静音字体
+    lv_obj_set_style_text_color(mute_label_, lvgl_theme->text_color(), 0);      // 设置标签颜色
 
-    battery_label_ = lv_label_create(right_icons);
-    lv_label_set_text(battery_label_, "");
-    lv_obj_set_style_text_font(battery_label_, icon_font, 0);
-    lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);
-    lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
+    battery_label_ = lv_label_create(right_icons);                              // 创建电池标签
+    lv_label_set_text(battery_label_, "");                                      // 设置电池标签为空
+    lv_obj_set_style_text_font(battery_label_, icon_font, 0);                   // 设置电池标签字体
+    lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);   // 设置电池标签字体颜色：主题色
+    lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);    // 设置电池标签左边距：主题
 
     /* Layer 2: Status bar - for center text labels */
-    status_bar_ = lv_obj_create(screen);
-    lv_obj_set_size(status_bar_, LV_HOR_RES, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(status_bar_, 0, 0);
-    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);  // Transparent background
-    lv_obj_set_style_border_width(status_bar_, 0, 0);
-    lv_obj_set_style_pad_all(status_bar_, 0, 0);
-    lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);
-    lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);
-    lv_obj_set_scrollbar_mode(status_bar_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_layout(status_bar_, LV_LAYOUT_NONE, 0);  // Use absolute positioning
-    lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 0);  // Overlap with top_bar_
+    status_bar_ = lv_obj_create(screen);                                                // 创建状态栏对象
+    lv_obj_set_size(status_bar_, LV_HOR_RES, LV_SIZE_CONTENT);                          // 设置状态栏大小：宽度为屏幕宽、高度自适应
+    lv_obj_set_style_radius(status_bar_, 0, 0);                                         // 消除圆角
+    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);  // Transparent background  // 设置透明背景
+    lv_obj_set_style_border_width(status_bar_, 0, 0);                                   // 设置边框为0
+    lv_obj_set_style_pad_all(status_bar_, 0, 0);                                        // 设置内边距为0
+    lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);                   // 设置上下内边距：主题下下内边距
+    lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);                // 
+    lv_obj_set_scrollbar_mode(status_bar_, LV_SCROLLBAR_MODE_OFF);                      // 关闭滚动显示（超出时不显示）
+    lv_obj_set_style_layout(status_bar_, LV_LAYOUT_NONE, 0);  // Use absolute positioning   // 绝对定位
+    lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 0);  // Overlap with top_bar_        // 对方方式为顶部中央
 
-    notification_label_ = lv_label_create(status_bar_);
-    lv_obj_set_width(notification_label_, LV_HOR_RES * 0.75);
-    lv_obj_set_style_text_align(notification_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(notification_label_, lvgl_theme->text_color(), 0);
-    lv_label_set_text(notification_label_, "");
-    lv_obj_align(notification_label_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+    notification_label_ = lv_label_create(status_bar_);                             // 在状态栏创建通知标签
+    lv_obj_set_width(notification_label_, LV_HOR_RES * 0.75);                       // 设置标签宽度为0.75倍水平宽度
+    lv_obj_set_style_text_align(notification_label_, LV_TEXT_ALIGN_CENTER, 0);      // 设置标签字体为居中对齐
+    lv_obj_set_style_text_color(notification_label_, lvgl_theme->text_color(), 0);  // 设置标签字体色：主题文本色
+    lv_label_set_text(notification_label_, "");                                     // 清空标签显示
+    lv_obj_align(notification_label_, LV_ALIGN_CENTER, 0, 0);                       // 设置标签对齐：父对象居中
+    lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);                       // 给标签添加隐藏标志
 
-    status_label_ = lv_label_create(status_bar_);
-    lv_obj_set_width(status_label_, LV_HOR_RES * 0.75);
-    lv_label_set_long_mode(status_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_obj_set_style_text_align(status_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(status_label_, lvgl_theme->text_color(), 0);
-    lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
-    lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
+    status_label_ = lv_label_create(status_bar_);                           // 在状态栏创建状态标签
+    lv_obj_set_width(status_label_, LV_HOR_RES * 0.75);                     // 标签宽度为0.57位水平宽度
+    lv_label_set_long_mode(status_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);   // 设置长文本处理模式：循环滚动
+    lv_obj_set_style_text_align(status_label_, LV_TEXT_ALIGN_CENTER, 0);    // 设置文本对齐方式：水平居中
+    lv_obj_set_style_text_color(status_label_, lvgl_theme->text_color(), 0);// 设置文本色，主题色
+    lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);          // 设置文本内容：初始化中
+    lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);                     // 设置状态标签对齐方式：居中
 
     /* Top layer: Bottom bar - fixed height at bottom */
     bottom_bar_ = lv_obj_create(screen);
@@ -940,18 +947,18 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000), LV_PART_MAIN);
 
-    low_battery_popup_ = lv_obj_create(screen);
-    lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(low_battery_popup_, LV_HOR_RES * 0.9, text_font->line_height * 2);
-    lv_obj_align(low_battery_popup_, LV_ALIGN_BOTTOM_MID, 0, -lvgl_theme->spacing(4));
-    lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);
-    lv_obj_set_style_radius(low_battery_popup_, lvgl_theme->spacing(4), 0);
+    low_battery_popup_ = lv_obj_create(screen);                                         // 创建低电量弹窗容器
+    lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);               // 设置容器滚动模式：不滚动
+    lv_obj_set_size(low_battery_popup_, LV_HOR_RES * 0.9, text_font->line_height * 2);  // 设置弹窗尺寸：0.9屏宽、当前字体2倍高
+    lv_obj_align(low_battery_popup_, LV_ALIGN_BOTTOM_MID, 0, -lvgl_theme->spacing(4));  // 弹窗容器对齐：底部居中，主题向上4像素
+    lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);  // 设置背景色：跟随主题
+    lv_obj_set_style_radius(low_battery_popup_, lvgl_theme->spacing(4), 0);             // 设置圆角：跟随主题4px
     
-    low_battery_label_ = lv_label_create(low_battery_popup_);
-    lv_label_set_text(low_battery_label_, Lang::Strings::BATTERY_NEED_CHARGE);
-    lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
-    lv_obj_center(low_battery_label_);
-    lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+    low_battery_label_ = lv_label_create(low_battery_popup_);                           // 创刊弹窗标签
+    lv_label_set_text(low_battery_label_, Lang::Strings::BATTERY_NEED_CHARGE);          // 设置标签内容
+    lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);               // 设置字体钯
+    lv_obj_center(low_battery_label_);                                                  // 设置标签对齐：居中
+    lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);                            // 增加隐藏标志
 }
 
 void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
