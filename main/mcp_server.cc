@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
+#include "system_info.h"
 
 #define TAG "MCP"
 
@@ -76,6 +77,18 @@ void McpServer::AddCommonTools() {
                 return true;
             });
     }
+
+    AddTool("self.get_cpu_usage",
+        "获取CPU使用率。"
+        "使用条件：仅当用户发出查看CPU使用情况时"
+        "行为规则："
+        "1. 使用此工具获取当前设备CPU使用情况；"
+        "2. 获取各个任务占用CPU情况",
+        PropertyList(),
+        [this](const PropertyList& properties) -> ReturnValue {
+            return SystemInfo::GetCpuUsage();
+        }
+    );
 
 #ifdef HAVE_LVGL
     auto display = board.GetDisplay();

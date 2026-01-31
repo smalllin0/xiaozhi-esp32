@@ -149,3 +149,18 @@ void SystemInfo::PrintHeapStats() {
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
     ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
 }
+
+/// @brief 获取CPU使用情况
+std::string SystemInfo::GetCpuUsage()
+{
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS
+    std::string buf;
+    buf.resize(1024);
+
+    vTaskGetRunTimeStats(buf.data());
+
+    return buf;
+#else
+    return "";
+#endif
+}
